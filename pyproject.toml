@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "villanibench"
+version = "0.1.0"
+description = "VillaniBench v0 scaffold"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0",
+]
+
+[project.scripts]
+villanibench = "villanibench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["villanibench*"]
