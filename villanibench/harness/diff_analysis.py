@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import difflib
 import fnmatch
 import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-import difflib
 
-IGNORE_PARTS = {"__pycache__", ".pytest_cache", ".git", "build", "dist", ".venv", "node_modules"}
+IGNORE_PARTS = {"__pycache__", ".pytest_cache", ".git", "build", "dist", ".venv", "venv", "node_modules"}
+IGNORE_SUFFIXES = {".pyc"}
+IGNORE_PATTERNS = {"*.egg-info", ".coverage", ".coverage.*", "coverage.xml"}
+MAX_TEXT_SNAPSHOT_BYTES = 512_000
+
+
+@dataclass
+class FileSnapshot:
+    hash: str
+    text_lines: list[str] | None
+    is_binary_or_large: bool
 
 
 @dataclass
@@ -24,16 +34,40 @@ class DiffStats:
 
 
 def _is_ignored(path: Path) -> bool:
-    return any(part in IGNORE_PARTS for part in path.parts)
+    if any(part in IGNORE_PARTS for part in path.parts):
+        return True
+    if path.suffix in IGNORE_SUFFIXES:
+        return True
+    return any(fnmatch.fnmatch(path.name, pattern) for pattern in IGNORE_PATTERNS)
 
 
-def snapshot_files(root: Path) -> dict[str, str]:
-    snap: dict[str, str] = {}
-    for p in root.rglob("*"):
-        if not p.is_file() or _is_ignored(p):
+def _read_text_lines(path: Path) -> tuple[list[str] | None, bool]:
+    raw = path.read_bytes()
+    if len(raw) > MAX_TEXT_SNAPSHOT_BYTES or b"\x00" in raw:
+        return None, True
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, True
+    return text.splitlines(), False
+
+
+def snapshot_files(root: Path, include_roots: tuple[str, ...] = ("repo", "tests/visible")) -> dict[str, FileSnapshot]:
+    snap: dict[str, FileSnapshot] = {}
+    for include_root in include_roots:
+        start = root / include_root
+        if not start.exists():
             continue
-        rel = p.relative_to(root).as_posix()
-        snap[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in start.rglob("*"):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(root)
+            if _is_ignored(rel):
+                continue
+            rel_key = rel.as_posix()
+            file_hash = hashlib.sha256(p.read_bytes()).hexdigest()
+            text_lines, is_binary_or_large = _read_text_lines(p)
+            snap[rel_key] = FileSnapshot(hash=file_hash, text_lines=text_lines, is_binary_or_large=is_binary_or_large)
     return snap
 
 
@@ -43,24 +77,40 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def analyze_diff(before: dict[str, str], after: dict[str, str], sandbox_root: Path, task_dir: Path, diff_output: Path) -> DiffStats:
+def analyze_diff(
+    before: dict[str, FileSnapshot],
+    after: dict[str, FileSnapshot],
+    task_dir: Path,
+    diff_output: Path,
+) -> DiffStats:
     changed = sorted(set(before) | set(after))
     touched = [p for p in changed if before.get(p) != after.get(p)]
     all_diff_lines: list[str] = []
     adds = dels = 0
     for rel in touched:
-        bp = sandbox_root / rel
-        # best effort text diff
-        if bp.exists():
-            after_lines = bp.read_text(encoding="utf-8", errors="ignore").splitlines()
-        else:
-            after_lines = []
-        # cannot reconstruct before content; use empty placeholder for hash-based snapshots v0
-        before_lines: list[str] = []
-        udiff = list(difflib.unified_diff(before_lines, after_lines, fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm=""))
+        before_file = before.get(rel)
+        after_file = after.get(rel)
+        before_lines = before_file.text_lines if before_file else []
+        after_lines = after_file.text_lines if after_file else []
+        before_special = before_file and before_file.is_binary_or_large
+        after_special = after_file and after_file.is_binary_or_large
+
+        if before_special or after_special:
+            all_diff_lines.append(f"Binary or large file changed: {rel}")
+            continue
+
+        udiff = list(
+            difflib.unified_diff(
+                before_lines or [],
+                after_lines or [],
+                fromfile=f"a/{rel}",
+                tofile=f"b/{rel}",
+                lineterm="",
+            )
+        )
         all_diff_lines.extend(udiff)
         for line in udiff:
-            if line.startswith("+++") or line.startswith("---"):
+            if line.startswith(("+++", "---", "@@")):
                 continue
             if line.startswith("+"):
                 adds += 1
@@ -91,7 +141,7 @@ def analyze_diff(before: dict[str, str], after: dict[str, str], sandbox_root: Pa
     decoys = set(failure_modes.get("decoy_files", []))
     decoy_touched = any(r.startswith("repo/") and r.removeprefix("repo/") in decoys for r in touched)
 
-    tests_modified = any(r.startswith("tests/") or "/tests/" in r for r in touched)
+    tests_modified = any(r.startswith("tests/visible/") for r in touched)
 
     return DiffStats(
         files_touched=touched,

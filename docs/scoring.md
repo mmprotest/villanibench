@@ -13,11 +13,25 @@ Category-first aggregation:
 3. mean across models
 4. backend stability = stddev across model-level scores
 
-Examples:
-- control=0.30, runner=0.51 => score=0.30 (captures 30% remaining headroom above control)
-- control=0.55, runner=0.69 => score=0.31
-- control=0.50, runner=0.25 => score=-0.50
+## Score validity
 
-Raw solve rate and related metrics are diagnostics only.
-Strict/non-strict runs are separated.
-Telemetry in v0 is partial.
+Comparison output includes `score_validity`:
+- `valid`: control is model-backed and fully comparable (same suite, model, budget profile, and comparison mode).
+- `diagnostic_only`: score computed against placeholder control.
+- `not_computed`: no comparable control baseline.
+
+In v0, `minimal_react_control` is placeholder/non-model-backed, so scores are expected to be `diagnostic_only` unless replaced by a model-backed control adapter.
+
+Strict/non-strict runs are separated and never mixed.
+
+## Status values used in scoring inputs
+
+- `success`
+- `hidden_failure`
+- `visible_failure`
+- `inconsistent_test_result`
+- `runner_crash`
+- `timeout`
+- `forbidden_modification`
+- `invalid_task`
+- `harness_error`

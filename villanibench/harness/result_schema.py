@@ -13,7 +13,9 @@ class TaskResult:
     runner: str = ""
     model: str = ""
     budget_profile: str = ""
+    category: str = ""
     comparison_mode: str = "non_strict"
+    control_kind: str | None = None
     setting_warnings: list[str] = field(default_factory=list)
     success_visible: bool = False
     success_hidden: bool = False

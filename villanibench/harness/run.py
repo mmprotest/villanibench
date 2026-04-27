@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 import subprocess
 import time
 import uuid
@@ -11,7 +10,7 @@ from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.result_schema import TaskResult
-from villanibench.harness.sandbox import prepare_sandbox
+from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
 from villanibench.tasks.loader import load_suite
 
 
@@ -21,10 +20,10 @@ def run_cmd(command: str, cwd: Path) -> tuple[int, str, str]:
 
 
 def classify_status(result: TaskResult) -> str:
-    if result.forbidden_file_modified:
-        return "forbidden_modification"
     if result.timed_out:
         return "timeout"
+    if result.forbidden_file_modified:
+        return "forbidden_modification"
     if result.budget_exceeded:
         return "budget_exceeded"
     if result.runner_crashed and not (result.success_visible and result.success_hidden):
@@ -32,10 +31,10 @@ def classify_status(result: TaskResult) -> str:
     if result.success_visible and result.success_hidden:
         return "success"
     if result.success_visible and not result.success_hidden:
-        return "visible_only_success"
-    if not result.success_visible and result.success_hidden:
         return "hidden_failure"
-    if not result.success_visible:
+    if not result.success_visible and result.success_hidden:
+        return "inconsistent_test_result"
+    if not result.success_visible and not result.success_hidden:
         return "visible_failure"
     return "harness_error"
 
@@ -58,6 +57,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             runner=adapter.name,
             model=model,
             budget_profile=task.budget_profile,
+            category=task.category,
         )
         try:
             sandbox, _repo = prepare_sandbox(task, task_output)
@@ -68,6 +68,10 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
                 results.append(result)
                 continue
+            hidden_path = sandbox / "tests" / "hidden"
+            if hidden_path.exists():
+                raise RuntimeError("Hidden tests leaked into runner-visible sandbox before runner execution")
+
             before = snapshot_files(sandbox)
             start = time.monotonic()
             adapter_cfg = {
@@ -82,9 +86,10 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.setting_warnings = run_res.setting_warnings
             result.runner_crashed = run_res.runner_crashed
             result.timed_out = run_res.timed_out
+            result.control_kind = run_res.control_kind
 
             after = snapshot_files(sandbox)
-            diff_stats = analyze_diff(before, after, sandbox, task.task_dir, task_output / "final.diff")
+            diff_stats = analyze_diff(before, after, task.task_dir, task_output / "final.diff")
             result.files_touched = diff_stats.files_touched
             result.lines_added = diff_stats.lines_added
             result.lines_deleted = diff_stats.lines_deleted
@@ -97,6 +102,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             post_visible_code, _, _ = run_cmd(task.visible_test_command, sandbox)
             result.success_visible = post_visible_code == 0
             if not result.timed_out:
+                copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
                 post_hidden_code, _, _ = run_cmd(task.hidden_test_command, sandbox)
                 result.success_hidden = post_hidden_code == 0
 
@@ -113,6 +119,9 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.status = classify_status(result)
             if pre_visible_err:
                 result.notes = pre_visible_err.strip()[:500]
+            if result.runner_crashed and result.status == "success":
+                note = "Runner exited non-zero but final state passed visible and hidden tests."
+                result.notes = f"{result.notes}\n{note}" if result.notes else note
         except Exception as exc:
             result.status = "harness_error"
             result.notes = str(exc)

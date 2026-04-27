@@ -14,14 +14,14 @@ class MinimalReactControlAdapter(RunnerAdapter):
         stdout_path = output_dir / "runner_stdout.txt"
         stderr_path = output_dir / "runner_stderr.txt"
         started = now_iso()
-        cmd = task.visible_test_command
+        cmd = 'python -c "print(\"minimal_react_control placeholder\")"'
         timed_out = False
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
                 result = subprocess.run(
                     cmd,
-                    cwd=sandbox_dir,
+                    cwd=sandbox_dir / "repo",
                     shell=True,
                     stdout=out,
                     stderr=err,
@@ -43,5 +43,6 @@ class MinimalReactControlAdapter(RunnerAdapter):
             runner_crashed=False,
             raw_command=cmd,
             comparison_mode="non_strict",
+            control_kind="placeholder",
             setting_warnings=["minimal_react_control_placeholder_no_model_calls"],
         )
