@@ -4,19 +4,51 @@ from pathlib import Path
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 
 
-def test_diff_analysis_detects_changed_files(tmp_path: Path):
-    root = tmp_path / "sandbox"
-    (root / "repo/src/demo_cli").mkdir(parents=True)
-    (root / "tests/visible").mkdir(parents=True)
-    (root / "repo/src/demo_cli/config.py").write_text("DEFAULT_RETRIES = 5\n", encoding="utf-8")
-
+def _mk_task_dir(tmp_path: Path) -> Path:
     task_dir = tmp_path / "task"
     (task_dir / "oracle").mkdir(parents=True)
     (task_dir / "oracle/allowed_files.json").write_text(json.dumps({"forbidden_patterns": ["tests/"]}), encoding="utf-8")
     (task_dir / "oracle/expected_files.json").write_text(json.dumps({"expected_files": ["src/demo_cli/config.py"]}), encoding="utf-8")
     (task_dir / "oracle/failure_modes.json").write_text("{}", encoding="utf-8")
+    return task_dir
+
+
+def test_diff_analysis_real_line_diff_for_modification(tmp_path: Path):
+    root = tmp_path / "sandbox"
+    (root / "repo/src/demo_cli").mkdir(parents=True)
+    (root / "tests/visible").mkdir(parents=True)
+    cfg = root / "repo/src/demo_cli/config.py"
+    cfg.write_text("A = 1\nDEFAULT_RETRIES = 5\nB = 2\n", encoding="utf-8")
+    task_dir = _mk_task_dir(tmp_path)
 
     before = snapshot_files(root)
-    (root / "repo/src/demo_cli/config.py").write_text("DEFAULT_RETRIES = 3\n", encoding="utf-8")
-    stats = analyze_diff(before, snapshot_files(root), root, task_dir, tmp_path / "final.diff")
-    assert "repo/src/demo_cli/config.py" in stats.files_touched
+    cfg.write_text("A = 1\nDEFAULT_RETRIES = 3\nB = 2\n", encoding="utf-8")
+    stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
+
+    assert stats.patch_size_lines == 2
+    assert "+DEFAULT_RETRIES = 3" in stats.unified_diff
+    assert "-DEFAULT_RETRIES = 5" in stats.unified_diff
+
+
+def test_diff_analysis_add_delete_and_visible_tests_tracking(tmp_path: Path):
+    root = tmp_path / "sandbox"
+    (root / "repo/src/demo_cli").mkdir(parents=True)
+    (root / "tests/visible").mkdir(parents=True)
+    added = root / "repo/src/demo_cli/new_file.py"
+    deleted = root / "repo/src/demo_cli/delete_me.py"
+    visible_test = root / "tests/visible/test_visible.py"
+    deleted.write_text("x = 1\n", encoding="utf-8")
+    visible_test.write_text("def test_a():\n    assert True\n", encoding="utf-8")
+    task_dir = _mk_task_dir(tmp_path)
+
+    before = snapshot_files(root)
+    deleted.unlink()
+    added.write_text("line1\nline2\n", encoding="utf-8")
+    visible_test.write_text("def test_a():\n    assert False\n", encoding="utf-8")
+    stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
+
+    assert "repo/src/demo_cli/new_file.py" in stats.files_touched
+    assert "repo/src/demo_cli/delete_me.py" in stats.files_touched
+    assert stats.tests_modified is True
+    assert stats.lines_added >= 2
+    assert stats.lines_deleted >= 1

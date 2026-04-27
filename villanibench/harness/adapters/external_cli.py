@@ -83,5 +83,6 @@ class ExternalCliAdapter(RunnerAdapter):
             runner_crashed=runner_crashed,
             raw_command=command,
             comparison_mode=comparison_mode,
+            control_kind=None,
             setting_warnings=warnings,
         )

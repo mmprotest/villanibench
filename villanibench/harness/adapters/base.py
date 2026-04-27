@@ -18,6 +18,7 @@ class AdapterRunResult:
     runner_crashed: bool
     raw_command: str
     comparison_mode: str
+    control_kind: str | None = None
     setting_warnings: list[str] = field(default_factory=list)
 
 
