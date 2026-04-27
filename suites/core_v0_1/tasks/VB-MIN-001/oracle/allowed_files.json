@@ -1,0 +1,5 @@
+{
+  "allowed_code_files": ["src/demo_cli/config.py"],
+  "forbidden_files": [],
+  "forbidden_patterns": ["tests/"]
+}
