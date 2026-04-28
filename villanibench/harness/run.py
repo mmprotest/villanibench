@@ -85,8 +85,18 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
     run_id = str(uuid.uuid4())
     adapter = build_adapter(runner)
     results: list[TaskResult] = []
+    log_progress = bool(config.get("log_progress"))
 
-    for task in tasks:
+    def _log(message: str) -> None:
+        if log_progress:
+            print(message, flush=True)
+
+    _log(
+        f"[run] start run_id={run_id} suite={suite.id} runner={adapter.name} model={model} task_count={len(tasks)} output_dir={output_dir}"
+    )
+
+    for task_index, task in enumerate(tasks, start=1):
+        _log(f"[task {task_index}/{len(tasks)}] start task_id={task.id}")
         task_output = output_dir / "tasks" / task.id
         task_output.mkdir(parents=True, exist_ok=True)
         resolved_budget_profile_id = task.budget_profile or suite.budget_profile
@@ -106,6 +116,9 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             sandbox, _repo = prepare_sandbox(task, task_output)
             test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
             pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            _log(
+                f"[task {task_index}/{len(tasks)}] preflight visible exit_code={pre_visible.exit_code} timed_out={pre_visible.timed_out} elapsed={pre_visible.wall_time_sec:.2f}s"
+            )
             result.preflight_visible_timed_out = pre_visible.timed_out
             if pre_visible.timed_out:
                 result.status = "invalid_task"
@@ -131,8 +144,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 "model": model,
                 "task_output_dir": str(task_output),
             }
+            _log(f"[task {task_index}/{len(tasks)}] runner start budget_profile={resolved_budget_profile_id}")
             run_res = adapter.run(task, sandbox, budget, adapter_cfg)
             elapsed = time.monotonic() - start
+            _log(
+                f"[task {task_index}/{len(tasks)}] runner done elapsed={elapsed:.2f}s crashed={run_res.runner_crashed} timed_out={run_res.timed_out} budget_exceeded={run_res.budget_exceeded}"
+            )
             result.wall_time_sec = round(elapsed, 4)
             result.comparison_mode = run_res.comparison_mode
             result.setting_warnings = run_res.setting_warnings
@@ -157,6 +174,9 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.decoy_file_touched = diff_stats.decoy_file_touched
 
             post_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            _log(
+                f"[task {task_index}/{len(tasks)}] post visible exit_code={post_visible.exit_code} timed_out={post_visible.timed_out} elapsed={post_visible.wall_time_sec:.2f}s"
+            )
             result.post_visible_timed_out = post_visible.timed_out
             result.success_visible = post_visible.exit_code == 0 and not post_visible.timed_out
             if post_visible.timed_out:
@@ -170,6 +190,9 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                     raise RuntimeError(note)
                 copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
                 post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
+                _log(
+                    f"[task {task_index}/{len(tasks)}] post hidden exit_code={post_hidden.exit_code} timed_out={post_hidden.timed_out} elapsed={post_hidden.wall_time_sec:.2f}s"
+                )
                 result.hidden_timed_out = post_hidden.timed_out
                 result.success_hidden = post_hidden.exit_code == 0 and not post_hidden.timed_out
                 if post_hidden.timed_out:
@@ -199,8 +222,10 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             else:
                 result.status = "harness_error"
             result.notes = append_note(result.notes, message)
+            _log(f"[task {task_index}/{len(tasks)}] error status={result.status} message={message}")
         (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
         results.append(result)
+        _log(f"[task {task_index}/{len(tasks)}] done status={result.status}")
 
     jsonl_path = output_dir / "results.jsonl"
     with jsonl_path.open("w", encoding="utf-8") as f:
@@ -220,4 +245,5 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         },
     }
     (output_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    _log(f"[run] done run_id={run_id} statuses={summary['statuses']}")
     return summary
