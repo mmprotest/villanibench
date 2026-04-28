@@ -1,5 +1,6 @@
 {
   "expected_files": [
     "src/demo_warnings/deprecations.py"
-  ]
+  ],
+  "decoy_files": []
 }

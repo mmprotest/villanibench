@@ -1,0 +1,1 @@
+A time-dependent check looks flaky around midnight. Fix the deterministic clock bug.

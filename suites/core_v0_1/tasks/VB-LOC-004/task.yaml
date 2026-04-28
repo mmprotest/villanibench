@@ -1,5 +1,5 @@
 id: VB-LOC-004
-title: Fix feature-flag fallback resolution
+title: Feature flag fallback missing remote
 category: localisation
 difficulty: medium
 language: python

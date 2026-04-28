@@ -1,5 +1,5 @@
 id: VB-LOC-005
-title: Fix notification preference precedence
+title: Notification preference precedence
 category: localisation
 difficulty: medium
 language: python

@@ -1,5 +1,10 @@
 {
-  "expected_files": ["src/demo_cli/config.py"],
-  "strongly_expected_files": ["src/demo_cli/config.py"],
-  "acceptable_extra_files": []
+  "expected_files": [
+    "src/demo_cli/config.py"
+  ],
+  "strongly_expected_files": [
+    "src/demo_cli/config.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": []
 }

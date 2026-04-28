@@ -1,4 +1,2 @@
-SECONDS_PER_DAY = 24 * 60 * 60
-
-def group_day(timestamp_utc: int, account_tz_offset_hours: int) -> int:
-    return timestamp_utc // SECONDS_PER_DAY
+def local_day_key(timestamp_hour: int, account_offset_hours: int) -> str:
+    return f"day-{(timestamp_hour + account_offset_hours) // 24}"

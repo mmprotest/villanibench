@@ -1,0 +1,1 @@
+The date parser rejects one of the documented date formats. Fix the parser without weakening validation.

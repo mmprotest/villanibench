@@ -1,0 +1,11 @@
+id: VB-REC-003
+title: Serializer preserves adapter payload status
+category: recovery
+difficulty: medium
+language: python
+framework: pytest
+prompt_file: prompt.txt
+repo_dir: repo
+visible_test_command: pytest tests/visible -q
+hidden_test_command: pytest tests/hidden -q
+budget_profile: standard_v0_1

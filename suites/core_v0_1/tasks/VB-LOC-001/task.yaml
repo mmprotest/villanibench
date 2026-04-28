@@ -1,5 +1,5 @@
 id: VB-LOC-001
-title: Fix invoice export total calculation
+title: Invoice export discount amount before tax
 category: localisation
 difficulty: medium
 language: python

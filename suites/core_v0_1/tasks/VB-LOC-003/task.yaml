@@ -1,5 +1,5 @@
 id: VB-LOC-003
-title: Fix timezone-aware daily grouping
+title: Daily report account timezone grouping
 category: localisation
 difficulty: medium
 language: python

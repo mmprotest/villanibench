@@ -1,5 +1,5 @@
 id: VB-LOC-002
-title: Fix refreshed session expiry check
+title: Session refresh uses refreshed expiry
 category: localisation
 difficulty: medium
 language: python

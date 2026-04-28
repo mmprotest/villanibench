@@ -1,2 +1,2 @@
-def is_session_valid(*, now_ts: int, refreshed_expires_at: int, issued_at: int) -> bool:
-    return now_ts <= issued_at
+def is_session_valid(session: dict, now: int) -> bool:
+    return now < session.get("expires_at", 0)

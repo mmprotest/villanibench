@@ -1,0 +1,1 @@
+Nested team permissions allow users even when a child team explicitly denies access. Fix the resolver.

@@ -1,0 +1,1 @@
+The pagination helper repeats the last item from the previous page. Fix the cursor calculation.

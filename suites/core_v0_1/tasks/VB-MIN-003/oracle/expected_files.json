@@ -1,5 +1,6 @@
 {
   "expected_files": [
     "src/demo_validation/messages.py"
-  ]
+  ],
+  "decoy_files": []
 }

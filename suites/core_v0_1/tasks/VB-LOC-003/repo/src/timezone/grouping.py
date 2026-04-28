@@ -1,4 +1,5 @@
-SECONDS_PER_DAY = 24 * 60 * 60
-
-def local_day(timestamp_utc: int, account_tz_offset_hours: int) -> int:
-    return timestamp_utc // SECONDS_PER_DAY
+def local_day_key(timestamp_hour: int, account_offset_hours: int) -> str:
+    # timestamp_hour is hours since day 0 midnight UTC.
+    # BUG: ignores the account offset and groups by UTC day.
+    day = timestamp_hour // 24
+    return f"day-{day}"

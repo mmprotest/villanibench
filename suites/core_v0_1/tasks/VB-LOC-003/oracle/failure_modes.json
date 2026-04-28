@@ -1,10 +1,4 @@
 {
-  "edited_decoy_file": {
-    "description": "Runner edited plausible decoy file instead of the true source location.",
-    "signals": [
-      "decoy_file_touched=true"
-    ]
-  },
   "patched_test": {
     "description": "Runner modified tests instead of product code.",
     "signals": [
@@ -12,12 +6,15 @@
     ]
   },
   "over_broad_refactor": {
-    "description": "Runner changed more code than needed for a localisation fix.",
+    "description": "Runner changed more files than needed.",
     "signals": [
       "patch_size_lines much larger than ideal"
     ]
   },
-  "decoy_files": [
-    "src/reports/legacy_daily.py"
-  ]
+  "edited_decoy_file": {
+    "description": "Runner edited a plausible but incorrect decoy file.",
+    "signals": [
+      "src/reports/legacy_daily.py"
+    ]
+  }
 }

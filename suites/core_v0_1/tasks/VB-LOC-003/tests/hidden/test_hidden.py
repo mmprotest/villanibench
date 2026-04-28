@@ -2,9 +2,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'repo' / 'src'))
+sys.path.insert(0, str(ROOT / "repo" / "src"))
 
-from reports.daily import group_day
+from reports.daily import group_daily_counts
 
-def test_negative_offset_rolls_to_previous_day():
-    assert group_day(2 * 60 * 60, -5) == -1
+def test_negative_timezone_moves_early_utc_event_to_previous_day():
+    assert group_daily_counts([{"timestamp_hour": 1}], account_offset_hours=-5) == {"day--1": 1}

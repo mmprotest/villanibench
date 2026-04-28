@@ -1,0 +1,1 @@
+Startup fails after the configuration key migration. Diagnose and fix the config loader.

@@ -1,0 +1,1 @@
+Inventory reservation counts become wrong after cancellations. Fix the shared quantity delta logic.
