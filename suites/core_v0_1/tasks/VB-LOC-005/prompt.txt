@@ -1,0 +1,1 @@
+Users who disable marketing emails still receive them when account defaults are enabled. Fix the bug.

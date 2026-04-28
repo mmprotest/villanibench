@@ -150,7 +150,7 @@ def analyze_diff(
     expected_files = set(expected.get("expected_files", [])) | set(expected.get("strongly_expected_files", []))
     expected_touched = any(r.startswith("repo/") and r.removeprefix("repo/") in expected_files for r in touched)
 
-    decoys = set(failure_modes.get("decoy_files", []))
+    decoys = set(failure_modes.get("decoy_files", [])) | set(expected.get("decoy_files", []))
     decoy_touched = any(r.startswith("repo/") and r.removeprefix("repo/") in decoys for r in touched)
 
     tests_modified = any(is_test_path(r) for r in touched)

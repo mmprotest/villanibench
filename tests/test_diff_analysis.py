@@ -78,3 +78,27 @@ def test_diff_analysis_marks_nested_tests_path_as_tests_modified(tmp_path: Path)
     t.write_text("def test_x():\n    assert False\n", encoding="utf-8")
     stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
     assert stats.tests_modified is True
+
+
+def test_diff_analysis_marks_decoy_and_expected_files(tmp_path: Path):
+    root = tmp_path / "sandbox"
+    (root / "repo/src/pkg").mkdir(parents=True)
+    (root / "tests/visible").mkdir(parents=True)
+    expected_file = root / "repo/src/pkg/target.py"
+    decoy_file = root / "repo/src/pkg/decoy.py"
+    expected_file.write_text("x=1\n", encoding="utf-8")
+    decoy_file.write_text("y=1\n", encoding="utf-8")
+    task_dir = tmp_path / "task"
+    (task_dir / "oracle").mkdir(parents=True)
+    (task_dir / "oracle/allowed_files.json").write_text(json.dumps({"forbidden_patterns": ["tests/"]}), encoding="utf-8")
+    (task_dir / "oracle/expected_files.json").write_text(
+        json.dumps({"expected_files": ["src/pkg/target.py"], "decoy_files": ["src/pkg/decoy.py"]}),
+        encoding="utf-8",
+    )
+    (task_dir / "oracle/failure_modes.json").write_text("{}", encoding="utf-8")
+    before = snapshot_files(root)
+    expected_file.write_text("x=2\n", encoding="utf-8")
+    decoy_file.write_text("y=2\n", encoding="utf-8")
+    stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
+    assert stats.expected_file_touched is True
+    assert stats.decoy_file_touched is True

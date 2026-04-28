@@ -1,0 +1,23 @@
+{
+  "edited_decoy_file": {
+    "description": "Runner edited plausible decoy file instead of the true source location.",
+    "signals": [
+      "decoy_file_touched=true"
+    ]
+  },
+  "patched_test": {
+    "description": "Runner modified tests instead of product code.",
+    "signals": [
+      "tests/ modified"
+    ]
+  },
+  "over_broad_refactor": {
+    "description": "Runner changed more code than needed for a localisation fix.",
+    "signals": [
+      "patch_size_lines much larger than ideal"
+    ]
+  },
+  "decoy_files": [
+    "src/features/legacy_resolver.py"
+  ]
+}

@@ -52,11 +52,13 @@ villanibench compare \
 - **Non-strict**: backend config alignment cannot be guaranteed.
 - Strict and non-strict runs are not mixed for VillaniBench Score.
 
-## Limitations (v0 scaffold)
+## Limitations (v0.1 scaffold)
 
-- The core v0.1 suite currently includes 5 `minimal_patch` smoke tasks only.
-- Results from this tiny v0 suite should not be used for public benchmark claims.
-- The suite remains a scaffold until more task categories are added.
+- The core v0.1 suite currently includes 10 tasks total:
+  - 5 `minimal_patch` tasks
+  - 5 `localisation` tasks
+- This is still too small for strong public benchmark claims; treat results as development diagnostics.
+- Next planned categories are `verification`, `state_coherence`, `tool_efficiency`, and `recovery`.
 
 - Telemetry can be partial depending on backend usage fields.
 - No leaderboard, no Docker, no charts, no web service.

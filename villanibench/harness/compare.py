@@ -110,17 +110,24 @@ def _render_report(summary: dict) -> str:
         "It is relative to `minimal_react_control`.",
         "Raw solve rate is diagnostic only.",
         "",
-        "| runner | model | comparison_mode | score_validity | VillaniBench Score | backend_stability_stddev | raw_solve_rate | valid_task_count |",
-        "|---|---|---|---|---:|---|---:|---:|",
+        "| runner | model | suite_id | budget_profile | comparison_mode | score_validity | VillaniBench Score | backend_stability_stddev | raw_solve_rate | valid_task_count |",
+        "|---|---|---|---|---|---|---:|---|---:|---:|",
     ]
 
-    raw_index = {(r["runner"], r["model"], r["comparison_mode"]): r for r in summary["raw_scores"]}
+    raw_index = {
+        (r["runner"], r["model"], r["suite_id"], r.get("budget_profile", ""), r["comparison_mode"]): r
+        for r in summary["raw_scores"]
+    }
     for row in vb_rows:
-        raw = raw_index.get((row["runner"], row["model"], row["comparison_mode"]), {})
+        raw = raw_index.get(
+            (row["runner"], row["model"], row["suite_id"], row.get("budget_profile", ""), row["comparison_mode"]),
+            {},
+        )
         score = row["model_villanibench_score"]
         score_text = "null" if score is None else f"{score:.3f}"
         lines.append(
-            f"| {row['runner']} | {row['model']} | {row['comparison_mode']} | {row.get('score_validity', 'not_computed')} | {score_text} | n/a | "
+            f"| {row['runner']} | {row['model']} | {row['suite_id']} | {row.get('budget_profile', '')} | {row['comparison_mode']} | "
+            f"{row.get('score_validity', 'not_computed')} | {score_text} | n/a | "
             f"{raw.get('raw_solve_rate', 0.0):.3f} | {raw.get('valid_task_count', 0)} |"
         )
 
@@ -162,12 +169,12 @@ def _render_report(summary: dict) -> str:
 
     lines += ["", "## Raw solve-rate diagnostics", ""]
     lines += [
-        "| runner | model | comparison_mode | raw_solve_rate | visible_solve_rate | hidden_solve_rate | timeout_rate | crash_rate | forbidden_modification_rate | test_modification_rate |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| runner | model | suite_id | budget_profile | comparison_mode | raw_solve_rate | visible_solve_rate | hidden_solve_rate | timeout_rate | crash_rate | forbidden_modification_rate | test_modification_rate |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in summary["raw_scores"]:
         lines.append(
-            f"| {row['runner']} | {row['model']} | {row['comparison_mode']} | {row['raw_solve_rate']:.3f} | {row['visible_solve_rate']:.3f} | "
+            f"| {row['runner']} | {row['model']} | {row['suite_id']} | {row.get('budget_profile', '')} | {row['comparison_mode']} | {row['raw_solve_rate']:.3f} | {row['visible_solve_rate']:.3f} | "
             f"{row['hidden_solve_rate']:.3f} | {row['timeout_rate']:.3f} | {row['crash_rate']:.3f} | "
             f"{row['forbidden_modification_rate']:.3f} | {row['test_modification_rate']:.3f} |"
         )

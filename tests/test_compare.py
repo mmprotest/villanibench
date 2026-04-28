@@ -144,3 +144,74 @@ def test_report_includes_raw_diagnostics_when_no_valid_scores(tmp_path: Path):
     report = (tmp_path / "out/REPORT.md").read_text(encoding="utf-8")
     assert "No valid VillaniBench Score is available for this comparison. See raw diagnostics below." in report
     assert "## Raw solve-rate diagnostics" in report
+
+
+def test_compare_raw_scores_do_not_mix_across_suites(tmp_path: Path):
+    run_a = tmp_path / "run_a"
+    run_b = tmp_path / "run_b"
+    _write_rows(run_a, [{
+        "runner": "villani",
+        "model": "dummy",
+        "suite_id": "suite-a",
+        "comparison_mode": "strict",
+        "budget_profile": "standard_v0_1",
+        "category": "minimal_patch",
+        "task_id": "t1",
+        "status": "success",
+        "success_visible": True,
+        "success_hidden": True,
+        "forbidden_file_modified": False,
+        "tests_modified": False,
+        "setting_warnings": [],
+    }])
+    _write_rows(run_b, [{
+        "runner": "villani",
+        "model": "dummy",
+        "suite_id": "suite-b",
+        "comparison_mode": "strict",
+        "budget_profile": "standard_v0_1",
+        "category": "minimal_patch",
+        "task_id": "t1",
+        "status": "visible_failure",
+        "success_visible": False,
+        "success_hidden": False,
+        "forbidden_file_modified": False,
+        "tests_modified": False,
+        "setting_warnings": [],
+    }])
+    summary = compare_runs([run_a, run_b], tmp_path / "out")
+    idx = {(r["suite_id"], r["budget_profile"]): r for r in summary["raw_scores"]}
+    assert idx[("suite-a", "standard_v0_1")]["raw_solve_rate"] == 1.0
+    assert idx[("suite-b", "standard_v0_1")]["raw_solve_rate"] == 0.0
+
+
+def test_compare_raw_scores_do_not_mix_across_budget_profiles_and_report_mapping(tmp_path: Path):
+    control_std = tmp_path / "control_std"
+    control_lite = tmp_path / "control_lite"
+    runner_std = tmp_path / "runner_std"
+    runner_lite = tmp_path / "runner_lite"
+    base = {
+        "runner": "villani",
+        "model": "dummy",
+        "suite_id": "suite-a",
+        "comparison_mode": "strict",
+        "category": "minimal_patch",
+        "task_id": "t1",
+        "control_kind": None,
+        "setting_warnings": [],
+    }
+    _write_rows(control_std, [{"runner": "minimal_react_control", "model": "dummy", "suite_id": "suite-a", "comparison_mode": "strict", "budget_profile": "standard_v0_1", "category": "minimal_patch", "task_id": "t1", "status": "visible_failure", "control_kind": "model_backed"}])
+    _write_rows(control_lite, [{"runner": "minimal_react_control", "model": "dummy", "suite_id": "suite-a", "comparison_mode": "strict", "budget_profile": "lite_v0_1", "category": "minimal_patch", "task_id": "t1", "status": "success", "control_kind": "model_backed"}])
+    _write_rows(runner_std, [{**base, "budget_profile": "standard_v0_1", "status": "success"}])
+    _write_rows(runner_lite, [{**base, "budget_profile": "lite_v0_1", "status": "visible_failure"}])
+
+    summary = compare_runs([control_std, control_lite, runner_std, runner_lite], tmp_path / "out")
+    raw_idx = {(r["suite_id"], r["budget_profile"], r["runner"]): r for r in summary["raw_scores"]}
+    assert raw_idx[("suite-a", "standard_v0_1", "villani")]["raw_solve_rate"] == 1.0
+    assert raw_idx[("suite-a", "lite_v0_1", "villani")]["raw_solve_rate"] == 0.0
+    vb_idx = {(r["suite_id"], r["budget_profile"]): r for r in summary["villanibench_scores_by_model"]}
+    assert vb_idx[("suite-a", "standard_v0_1")]["model_villanibench_score"] == 1.0
+    assert vb_idx[("suite-a", "lite_v0_1")]["model_villanibench_score"] == -1.0
+    report = (tmp_path / "out/REPORT.md").read_text(encoding="utf-8")
+    assert "| villani | dummy | suite-a | standard_v0_1 | strict | valid | 1.000" in report
+    assert "| villani | dummy | suite-a | lite_v0_1 | strict | valid | -1.000" in report

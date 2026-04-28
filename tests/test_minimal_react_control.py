@@ -19,23 +19,31 @@ VB_MIN_001 = load_task(SUITE_DIR / "tasks" / "VB-MIN-001")
 class FakeChatClient:
     def __init__(self):
         self.calls = 0
+        self._step = 0
+        self._task_marker = ""
 
     def create_chat_completion(self, *, model: str, messages: list[ChatMessage], max_tokens: int, temperature: int) -> ChatResponse:
         self.calls += 1
         joined = "\n".join(m.content for m in messages)
         assert "tests/hidden" not in joined
-        if self.calls == 1:
+        task_marker = messages[1].content
+        if task_marker != self._task_marker:
+            self._task_marker = task_marker
+            self._step = 0
+        self._step += 1
+        if "default retry count" not in task_marker.lower():
+            return ChatResponse("ACTION: finish\nREASON: skip", prompt_tokens=1, completion_tokens=1)
+        if self._step == 1:
             return ChatResponse("ACTION: read_file\nPATH: src/demo_cli/config.py", prompt_tokens=10, completion_tokens=8)
-        if self.calls == 2:
+        if self._step == 2:
             content = (
-                "ACTION: write_file\n"
+                "ACTION: replace_text\n"
                 "PATH: src/demo_cli/config.py\n"
-                "CONTENT:\n"
-                '"""Config constants for the demo CLI."""\n\nDEFAULT_RETRIES = 3\n'
-                "END_CONTENT"
+                "OLD:\nDEFAULT_RETRIES = 5\nEND_OLD\n"
+                "NEW:\nDEFAULT_RETRIES = 3\nEND_NEW"
             )
             return ChatResponse(content, prompt_tokens=11, completion_tokens=10)
-        if self.calls == 3:
+        if self._step == 3:
             return ChatResponse("ACTION: run_tests", prompt_tokens=8, completion_tokens=3)
         return ChatResponse("ACTION: finish\nREASON: done", prompt_tokens=6, completion_tokens=3)
 
@@ -264,6 +272,68 @@ def test_finish_after_write_requires_visible_verification(tmp_path: Path):
     err = (out / "runner_stderr.txt").read_text(encoding="utf-8")
     assert res.runner_crashed is False
     assert "finish blocked repeatedly" not in err
+
+
+def test_finish_after_replace_text_requires_visible_verification(tmp_path: Path):
+    responses = [
+        "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES=5\nEND_OLD\nNEW:\nDEFAULT_RETRIES=3\nEND_NEW",
+        "ACTION: finish\nREASON: done",
+        "ACTION: run_tests",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src/demo_cli").mkdir(parents=True)
+    (sandbox / "repo/src/demo_cli/config.py").write_text("DEFAULT_RETRIES=5\n", encoding="utf-8")
+    (sandbox / "tests/visible").mkdir(parents=True)
+    (sandbox / "tests/visible/test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    err = (out / "runner_stderr.txt").read_text(encoding="utf-8")
+    assert res.runner_crashed is False
+    assert "finish blocked repeatedly" not in err
+
+
+def test_replace_text_rejects_ambiguous_and_missing(tmp_path: Path):
+    def check_ambiguous(obs: str) -> None:
+        assert "OLD text is ambiguous and occurs multiple times." in obs
+
+    def check_missing(obs: str) -> None:
+        assert "OLD text not found." in obs
+
+    responses = [
+        "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES=5\nEND_OLD\nNEW:\nDEFAULT_RETRIES=3\nEND_NEW",
+        "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDOES_NOT_EXIST\nEND_OLD\nNEW:\nDEFAULT_RETRIES=3\nEND_NEW",
+        "ACTION: finish\nREASON: done",
+    ]
+    client = ObservationCheckingChatClient(responses, [check_ambiguous, check_missing])
+    adapter = MinimalReactControlAdapter(chat_client=client)
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src/demo_cli").mkdir(parents=True)
+    (sandbox / "repo/src/demo_cli/config.py").write_text("DEFAULT_RETRIES=5\nDEFAULT_RETRIES=5\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, client, sandbox, out)
+
+
+def test_replace_text_rejects_tests_and_outside_path(tmp_path: Path):
+    responses = [
+        "ACTION: replace_text\nPATH: tests/test_x.py\nOLD:\na\nEND_OLD\nNEW:\nb\nEND_NEW",
+        "ACTION: replace_text\nPATH: ../outside.txt\nOLD:\na\nEND_OLD\nNEW:\nb\nEND_NEW",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    assert not (sandbox / "repo/tests/test_x.py").exists()
+    assert not (tmp_path / "outside.txt").exists()
 
 
 def test_finish_after_write_repeated_without_verification_crashes(tmp_path: Path):

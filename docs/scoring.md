@@ -40,3 +40,6 @@ Backend stability is reported as stddev across model-level VillaniBench Scores, 
 - `harness_error`
 
 Runs based on fewer than 30 tasks should be treated as smoke diagnostics, not public benchmark claims.
+
+The current v0.1 core suite has 10 tasks, which is still small; scores are development diagnostics, not public leaderboard evidence.
+Stable VillaniBench claims require all core categories and substantially more task count.

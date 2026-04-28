@@ -88,6 +88,20 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     content_lines.append(lines[i])
                     i += 1
                 fields["CONTENT"] = "\n".join(content_lines)
+            elif line.startswith("OLD:"):
+                i += 1
+                old_lines: list[str] = []
+                while i < len(lines) and lines[i] != "END_OLD":
+                    old_lines.append(lines[i])
+                    i += 1
+                fields["OLD"] = "\n".join(old_lines)
+            elif line.startswith("NEW:"):
+                i += 1
+                new_lines: list[str] = []
+                while i < len(lines) and lines[i] != "END_NEW":
+                    new_lines.append(lines[i])
+                    i += 1
+                fields["NEW"] = "\n".join(new_lines)
             elif ":" in line:
                 key, value = line.split(":", 1)
                 fields[key.strip()] = value.strip()
@@ -151,6 +165,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     "ACTION: run_tests\n\n"
                     "or\n\n"
                     "ACTION: write_file\nPATH: src/example.py\nCONTENT:\n<full new file content>\nEND_CONTENT\n\n"
+                    "or\n\n"
+                    "ACTION: replace_text\nPATH: src/example.py\nOLD:\n<exact old text>\nEND_OLD\nNEW:\n<exact new text>\nEND_NEW\n\n"
                     "or\n\n"
                     "ACTION: finish\nREASON: <short reason>\n\n"
                     "No markdown.\nNo extra prose."
@@ -289,6 +305,45 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             wrote_files = True
                             last_write_step = step
                             obs = "write_file ok"
+                elif action == "replace_text":
+                    rel_path = fields.get("PATH", "")
+                    if rel_path.startswith("tests/") or "/tests/" in rel_path or "\\tests\\" in rel_path or rel_path.startswith("repo/tests/"):
+                        obs = "Refused: tests modification is not allowed."
+                    else:
+                        file_path = resolve_repo_path(repo_root, rel_path)
+                        if (
+                            file_path is None
+                            or not file_path.exists()
+                            or not file_path.is_file()
+                            or (self._telem.file_writes or 0) >= budget.max_file_writes
+                            or patch_attempts >= budget.max_patch_attempts
+                        ):
+                            obs = "Invalid replace_text action or write budget reached."
+                        else:
+                            raw = file_path.read_bytes()
+                            if b"\x00" in raw:
+                                obs = "Refused: binary files are not supported."
+                            else:
+                                try:
+                                    current = raw.decode("utf-8")
+                                except UnicodeDecodeError:
+                                    obs = "Refused: binary files are not supported."
+                                else:
+                                    old = fields.get("OLD", "")
+                                    new = fields.get("NEW", "")
+                                    count = current.count(old)
+                                    if count == 0:
+                                        obs = "OLD text not found."
+                                    elif count > 1:
+                                        obs = "OLD text is ambiguous and occurs multiple times."
+                                    else:
+                                        updated = current.replace(old, new, 1)
+                                        file_path.write_text(updated, encoding="utf-8")
+                                        self._telem.file_writes = (self._telem.file_writes or 0) + 1
+                                        patch_attempts += 1
+                                        wrote_files = True
+                                        last_write_step = step
+                                        obs = "replace_text ok"
                 elif action == "finish":
                     if wrote_files and (last_visible_test_step is None or (last_write_step is not None and last_visible_test_step <= last_write_step)):
                         blocked_finish_attempts += 1
@@ -309,7 +364,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         break
                 else:
                     invalid_actions += 1
-                    obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/finish."
+                    obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/replace_text/finish."
                     if invalid_actions > 3:
                         runner_crashed = True
                         exit_code = 1
