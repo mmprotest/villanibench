@@ -79,9 +79,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.cmd == "run":
+        if args.runner in {"minimal_react_control", "react"} and not args.base_url:
+            raise SystemExit("minimal_react_control requires --base-url because it is model-backed.")
         cfg = {
             "base_url": args.base_url,
-            "api_key": args.api_key,
+            "api_key": args.api_key or "dummy",
             "command_template": _resolve_command_template(args),
         }
         summary = run_suite(Path(args.suite), args.runner, args.model, Path(args.output_dir), cfg)

@@ -7,6 +7,7 @@
 - `cleanup(sandbox_dir)`
 
 External adapters are CLI-template based (`subprocess`) and do not import internals.
+`minimal_react_control` is internal and model-backed (OpenAI-compatible chat completions).
 
 ## Execution contract
 

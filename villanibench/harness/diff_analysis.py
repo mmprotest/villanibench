@@ -83,6 +83,16 @@ def analyze_diff(
     task_dir: Path,
     diff_output: Path,
 ) -> DiffStats:
+    def is_test_path(rel: str) -> bool:
+        return (
+            rel.startswith("tests/")
+            or "/tests/" in rel
+            or "\\tests\\" in rel
+            or rel.startswith("repo/tests/")
+            or rel.startswith("tests/visible/")
+            or rel.startswith("tests/hidden/")
+        )
+
     changed = sorted(set(before) | set(after))
     touched = [p for p in changed if before.get(p) != after.get(p)]
     all_diff_lines: list[str] = []
@@ -129,6 +139,8 @@ def analyze_diff(
     forbidden_patterns = allowed.get("forbidden_patterns", [])
     forbidden = False
     for rel in touched:
+        if is_test_path(rel):
+            forbidden = True
         if rel in forbidden_files:
             forbidden = True
         for pat in forbidden_patterns:
@@ -141,7 +153,7 @@ def analyze_diff(
     decoys = set(failure_modes.get("decoy_files", []))
     decoy_touched = any(r.startswith("repo/") and r.removeprefix("repo/") in decoys for r in touched)
 
-    tests_modified = any(r.startswith("tests/visible/") for r in touched)
+    tests_modified = any(is_test_path(r) for r in touched)
 
     return DiffStats(
         files_touched=touched,

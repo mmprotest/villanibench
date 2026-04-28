@@ -15,6 +15,8 @@ def copy_visible_tests_to_sandbox(task: TaskSpec, sandbox_dir: Path) -> Path:
 
 def copy_hidden_tests_to_sandbox_for_evaluation(task: TaskSpec, sandbox_dir: Path) -> Path:
     tests_hidden_dst = sandbox_dir / "tests" / "hidden"
+    if tests_hidden_dst.exists():
+        raise RuntimeError("Runner created tests/hidden before evaluator copied hidden tests.")
     tests_hidden_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(task.task_dir / "tests" / "hidden", tests_hidden_dst)
     return tests_hidden_dst

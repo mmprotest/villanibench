@@ -3,9 +3,10 @@
 VillaniBench compares runners on the same task, same backend model, and same budget.
 
 - Runner quality is measured relative to a fixed control runner (`minimal_react_control`).
-- The control runner is the zero point.
+- The model-backed control runner is the zero point.
 - Raw solve rate is diagnostic only.
 - Strict and non-strict comparisons are reported separately.
+- Every backend/model combination needs its own control baseline.
 - Conflict disclosure: benchmark authors may also build runners; results should be independently scrutinized.
 
 ## Runner-visible contract and hidden-test isolation

@@ -102,6 +102,11 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             post_visible_code, _, _ = run_cmd(task.visible_test_command, sandbox)
             result.success_visible = post_visible_code == 0
             if not result.timed_out:
+                if (sandbox / "tests" / "hidden").exists():
+                    result.forbidden_file_modified = True
+                    note = "Runner created tests/hidden before evaluator copied hidden tests."
+                    result.notes = f"{result.notes}\n{note}" if result.notes else note
+                    raise RuntimeError(note)
                 copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
                 post_hidden_code, _, _ = run_cmd(task.hidden_test_command, sandbox)
                 result.success_hidden = post_hidden_code == 0
@@ -123,8 +128,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 note = "Runner exited non-zero but final state passed visible and hidden tests."
                 result.notes = f"{result.notes}\n{note}" if result.notes else note
         except Exception as exc:
-            result.status = "harness_error"
-            result.notes = str(exc)
+            message = str(exc)
+            if "Runner created tests/hidden before evaluator copied hidden tests." in message:
+                result.status = "forbidden_modification"
+            else:
+                result.status = "harness_error"
+            result.notes = message
         (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
         results.append(result)
 
