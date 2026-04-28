@@ -28,7 +28,7 @@ class TaskSpec:
     repo_dir: str
     visible_test_command: str
     hidden_test_command: str
-    budget_profile: str
+    budget_profile: str | None
     task_dir: Path
 
 

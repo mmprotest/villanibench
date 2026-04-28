@@ -92,6 +92,17 @@ def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = 
 
 def _render_report(summary: dict) -> str:
     lines = ["# VillaniBench Comparison Report", ""]
+    vb_rows = summary.get("villanibench_scores_by_model", [])
+    has_valid_score = any(row.get("score_validity") == "valid" and row.get("model_villanibench_score") is not None for row in vb_rows)
+    has_only_diagnostic_scores = bool(vb_rows) and all(row.get("score_validity") == "diagnostic_only" for row in vb_rows)
+
+    if not has_valid_score:
+        lines.append("No valid VillaniBench Score is available for this comparison. See raw diagnostics below.")
+        lines.append("")
+    if has_only_diagnostic_scores:
+        lines.append("Only diagnostic VillaniBench Scores are available. Do not treat this as a valid benchmark ranking.")
+        lines.append("")
+
     lines += [
         "## VillaniBench Score",
         "",
@@ -104,7 +115,7 @@ def _render_report(summary: dict) -> str:
     ]
 
     raw_index = {(r["runner"], r["model"], r["comparison_mode"]): r for r in summary["raw_scores"]}
-    for row in summary["villanibench_scores_by_model"]:
+    for row in vb_rows:
         raw = raw_index.get((row["runner"], row["model"], row["comparison_mode"]), {})
         score = row["model_villanibench_score"]
         score_text = "null" if score is None else f"{score:.3f}"
@@ -117,8 +128,8 @@ def _render_report(summary: dict) -> str:
     lines.append("- `diagnostic_only`: score is computed against placeholder control and should not be used for ranking.")
     lines.append("- `not_computed`: no comparable control baseline exists.")
 
-    if summary["villanibench_scores_by_model"] and all(
-        row.get("score_validity") in {"diagnostic_only", "not_computed"} for row in summary["villanibench_scores_by_model"]
+    if vb_rows and all(
+        row.get("score_validity") in {"diagnostic_only", "not_computed"} for row in vb_rows
     ):
         lines += [
             "",

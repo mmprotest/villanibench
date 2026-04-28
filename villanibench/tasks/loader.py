@@ -58,7 +58,7 @@ def load_task(task_dir: Path) -> TaskSpec:
         repo_dir=str(data["repo_dir"]),
         visible_test_command=str(data["visible_test_command"]),
         hidden_test_command=str(data["hidden_test_command"]),
-        budget_profile=str(data["budget_profile"]),
+        budget_profile=str(data.get("budget_profile") or "") or None,
         task_dir=task_dir,
     )
 
@@ -72,7 +72,7 @@ def load_suite(suite_dir: Path) -> tuple[SuiteSpec, list[TaskSpec]]:
         description=str(data["description"]),
         task_count=int(data["task_count"]),
         categories=list(data["categories"]),
-        budget_profile=str(data["budget_profile"]),
+        budget_profile=str(data.get("budget_profile") or ""),
         visibility=str(data["visibility"]),
         suite_dir=suite_dir,
     )

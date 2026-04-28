@@ -30,12 +30,37 @@ REQUIRED_TASK_FIELDS = [
     "repo_dir",
     "visible_test_command",
     "hidden_test_command",
-    "budget_profile",
 ]
+
+DIRTY_PATH_PARTS = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".coverage",
+    "htmlcov",
+    ".venv",
+    "venv",
+    "node_modules",
+    "dist",
+    "build",
+}
+DIRTY_SUFFIXES = {".pyc", ".pyo", ".pyd"}
 
 
 def validate_task_dir(task_dir: Path) -> list[str]:
     errors: list[str] = []
+    for path in task_dir.rglob("*"):
+        rel = path.relative_to(task_dir)
+        parts = set(rel.parts)
+        if any(part in DIRTY_PATH_PARTS for part in parts):
+            errors.append(f"Generated artifact found in task directory: {rel.as_posix()}")
+            continue
+        if path.suffix in DIRTY_SUFFIXES:
+            errors.append(f"Generated artifact found in task directory: {rel.as_posix()}")
+            continue
+        if any(part.endswith(".egg-info") for part in rel.parts):
+            errors.append(f"Generated artifact found in task directory: {rel.as_posix()}")
     for rel in REQUIRED_TASK_FILES:
         if not (task_dir / rel).exists():
             errors.append(f"Missing required file/dir: {rel}")
@@ -88,6 +113,8 @@ def validate_suite_dir(suite_dir: Path) -> list[str]:
     for task in tasks:
         task_errors = validate_task_dir(task.task_dir)
         errors.extend([f"{task.id}: {e}" for e in task_errors])
+        if not (task.budget_profile or suite.budget_profile):
+            errors.append(f"{task.id}: Missing/empty resolved budget profile")
         if task.category not in suite_categories:
             errors.append(f"Task category not in suite categories: {task.id}:{task.category}")
     return errors
