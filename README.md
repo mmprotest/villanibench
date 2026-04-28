@@ -7,7 +7,7 @@ Core definition: VillaniBench measures how much reliable agentic work a runner c
 - `minimal_react_control` is the zero point (score `0.0`).
 - VillaniBench Score is control-normalised and relative to control.
 - Raw solve rate is reported as diagnostics only.
-- `minimal_react_control` is a real model-backed control runner.
+- `minimal_react_control` is a real model-backed control runner and requires `--base-url` for runs.
 - VillaniBench Score is valid only with a matching model-backed control run.
 
 This repository is separate from Villani Code. Villani, OpenCode, and Claude Code are invoked as external CLIs via adapter templates.
@@ -53,6 +53,10 @@ villanibench compare \
 - Strict and non-strict runs are not mixed for VillaniBench Score.
 
 ## Limitations (v0 scaffold)
+
+- The core v0.1 suite currently includes 5 `minimal_patch` smoke tasks only.
+- Results from this tiny v0 suite should not be used for public benchmark claims.
+- The suite remains a scaffold until more task categories are added.
 
 - Telemetry can be partial depending on backend usage fields.
 - No leaderboard, no Docker, no charts, no web service.

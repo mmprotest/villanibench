@@ -38,3 +38,5 @@ Backend stability is reported as stddev across model-level VillaniBench Scores, 
 - `forbidden_modification`
 - `invalid_task`
 - `harness_error`
+
+Runs based on fewer than 30 tasks should be treated as smoke diagnostics, not public benchmark claims.

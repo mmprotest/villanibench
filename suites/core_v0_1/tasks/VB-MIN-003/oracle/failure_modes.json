@@ -1,0 +1,6 @@
+{
+  "failure_modes": [
+    "patched_test",
+    "over_broad_refactor"
+  ]
+}

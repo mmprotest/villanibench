@@ -10,6 +10,20 @@ from villanibench.harness.telemetry import Telemetry
 from .base import AdapterRunResult, RunnerAdapter, now_iso
 
 
+def resolve_repo_path(repo_root: Path, raw_path: str) -> Path | None:
+    if not raw_path:
+        return None
+    candidate_raw = Path(raw_path)
+    if candidate_raw.is_absolute():
+        return None
+    candidate = (repo_root / candidate_raw).resolve()
+    try:
+        candidate.relative_to(repo_root.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
 class MinimalReactControlAdapter(RunnerAdapter):
     name = "minimal_react_control"
 
@@ -25,7 +39,6 @@ class MinimalReactControlAdapter(RunnerAdapter):
             telemetry_completeness="complete",
             missing_telemetry=[],
         )
-        self._patch_attempts = 0
 
     def _client(self, config: dict) -> ChatClient:
         if self._chat_client is not None:
@@ -34,12 +47,6 @@ class MinimalReactControlAdapter(RunnerAdapter):
         if factory:
             return factory(config)
         return OpenAICompatibleChatClient(base_url=str(config["base_url"]), api_key=str(config.get("api_key") or "dummy"))
-
-    def _safe_repo_path(self, repo_root: Path, rel_path: str) -> Path | None:
-        candidate = (repo_root / rel_path).resolve()
-        if not str(candidate).startswith(str(repo_root.resolve())):
-            return None
-        return candidate
 
     def _parse_action(self, text: str) -> tuple[str | None, dict[str, str]]:
         lines = [line.rstrip("\n") for line in text.splitlines()]
@@ -69,6 +76,24 @@ class MinimalReactControlAdapter(RunnerAdapter):
             self._telem.missing_telemetry = ["tokens_input", "tokens_output"]
 
     def run(self, task, sandbox_dir: Path, budget, config: dict) -> AdapterRunResult:
+        self._telem = Telemetry(
+            model_calls=0,
+            tokens_input=0,
+            tokens_output=0,
+            shell_commands=0,
+            file_reads=0,
+            file_writes=0,
+            telemetry_completeness="complete",
+            missing_telemetry=[],
+        )
+        patch_attempts = 0
+        invalid_actions = 0
+        blocked_finish_attempts = 0
+        wrote_files = False
+        last_write_step: int | None = None
+        last_visible_test_step: int | None = None
+        step = 0
+
         output_dir = Path(config["task_output_dir"])
         stdout_path = output_dir / "runner_stdout.txt"
         stderr_path = output_dir / "runner_stderr.txt"
@@ -80,7 +105,6 @@ class MinimalReactControlAdapter(RunnerAdapter):
         timed_out = False
         exit_code = 0
         runner_crashed = False
-        invalid_actions = 0
         client = self._client(config)
         model = str(config.get("model", ""))
         messages: list[ChatMessage] = [
@@ -117,13 +141,14 @@ class MinimalReactControlAdapter(RunnerAdapter):
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             deadline = time.monotonic() + budget.wall_time_sec
             while True:
+                step += 1
                 if time.monotonic() >= deadline:
                     timed_out = True
                     exit_code = 124
                     break
                 if (self._telem.model_calls or 0) >= budget.max_model_calls:
                     break
-                if self._patch_attempts >= budget.max_patch_attempts:
+                if patch_attempts >= budget.max_patch_attempts:
                     break
                 try:
                     response = client.create_chat_completion(
@@ -149,7 +174,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                 obs = ""
                 if action == "list_files":
                     rel_path = fields.get("PATH", ".")
-                    base = self._safe_repo_path(repo_root, rel_path)
+                    base = resolve_repo_path(repo_root, rel_path)
                     if base is None or not base.exists() or not base.is_dir():
                         obs = "Invalid PATH. Use relative directory under repo."
                     else:
@@ -157,7 +182,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         obs = "\n".join(files[:200]) if files else "(no files)"
                 elif action == "read_file":
                     rel_path = fields.get("PATH", "")
-                    file_path = self._safe_repo_path(repo_root, rel_path)
+                    file_path = resolve_repo_path(repo_root, rel_path)
                     if (
                         file_path is None
                         or not file_path.exists()
@@ -171,11 +196,21 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         obs = text[:16000] + ("\n...[TRUNCATED]..." if len(text) > 16000 else "")
                 elif action == "search":
                     query = fields.get("QUERY", "")
+                    rel_path = fields.get("PATH")
                     if not query:
                         obs = "QUERY is required."
                     else:
+                        search_root = repo_root
+                        if rel_path:
+                            resolved = resolve_repo_path(repo_root, rel_path)
+                            if resolved is None or not resolved.exists() or not resolved.is_dir():
+                                obs = "Invalid PATH. Use relative directory under repo."
+                                messages.append(ChatMessage(role="assistant", content=response.content))
+                                messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+                                continue
+                            search_root = resolved
                         results: list[str] = []
-                        for p in repo_root.rglob("*"):
+                        for p in search_root.rglob("*"):
                             if not p.is_file() or any(part in {".git", "__pycache__", ".pytest_cache", ".venv", "venv"} for part in p.parts):
                                 continue
                             txt = p.read_text(encoding="utf-8", errors="ignore")
@@ -192,6 +227,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         obs = "Shell command budget exceeded."
                     else:
                         self._telem.shell_commands = (self._telem.shell_commands or 0) + 1
+                        last_visible_test_step = step
                         remaining = max(1, int(deadline - time.monotonic()))
                         try:
                             res = subprocess.run(
@@ -207,27 +243,42 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             obs = "run_tests timed out."
                 elif action == "write_file":
                     rel_path = fields.get("PATH", "")
-                    if rel_path.startswith("tests/") or "/tests/" in rel_path or "\\tests\\" in rel_path:
+                    if rel_path.startswith("tests/") or "/tests/" in rel_path or "\\tests\\" in rel_path or rel_path.startswith("repo/tests/"):
                         obs = "Refused: tests modification is not allowed."
                     else:
-                        file_path = self._safe_repo_path(repo_root, rel_path)
+                        file_path = resolve_repo_path(repo_root, rel_path)
                         if (
                             file_path is None
                             or (self._telem.file_writes or 0) >= budget.max_file_writes
-                            or self._patch_attempts >= budget.max_patch_attempts
+                            or patch_attempts >= budget.max_patch_attempts
                         ):
                             obs = "Invalid write_file action or write budget reached."
                         else:
                             file_path.parent.mkdir(parents=True, exist_ok=True)
                             file_path.write_text(fields.get("CONTENT", ""), encoding="utf-8")
                             self._telem.file_writes = (self._telem.file_writes or 0) + 1
-                            self._patch_attempts += 1
+                            patch_attempts += 1
+                            wrote_files = True
+                            last_write_step = step
                             obs = "write_file ok"
                 elif action == "finish":
-                    obs = f"finish: {fields.get('REASON', '')}"
-                    messages.append(ChatMessage(role="assistant", content=response.content))
-                    messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
-                    break
+                    if wrote_files and (last_visible_test_step is None or (last_write_step is not None and last_visible_test_step <= last_write_step)):
+                        blocked_finish_attempts += 1
+                        obs = "You modified files but have not run visible tests after the latest edit. Run ACTION: run_tests before finishing."
+                        if blocked_finish_attempts > 3:
+                            runner_crashed = True
+                            exit_code = 1
+                            err.write(
+                                "finish blocked repeatedly after writes without visible verification; stopping after more than 3 attempts.\n"
+                            )
+                            messages.append(ChatMessage(role="assistant", content=response.content))
+                            messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+                            break
+                    else:
+                        obs = f"finish: {fields.get('REASON', '')}"
+                        messages.append(ChatMessage(role="assistant", content=response.content))
+                        messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+                        break
                 else:
                     invalid_actions += 1
                     obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/finish."

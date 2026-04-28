@@ -12,3 +12,5 @@ Hidden tests must not be visible before runner execution. The evaluator copies `
 Calibration guidance:
 
 Tasks should be calibrated so minimal_react_control solves roughly 20% to 60% on approved mid-tier models. Tasks solved by everyone or no one are less useful for stable control-normalised scoring.
+
+For `minimal_patch` tasks, keep the reference patch small and typically target one expected source file in `oracle/expected_files.json`.
