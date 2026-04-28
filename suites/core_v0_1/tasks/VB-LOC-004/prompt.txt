@@ -1,0 +1,1 @@
+Feature flags ignore the configured fallback value when the remote value is missing. Fix the bug.

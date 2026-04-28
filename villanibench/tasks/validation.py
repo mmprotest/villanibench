@@ -48,6 +48,13 @@ DIRTY_PATH_PARTS = {
 DIRTY_SUFFIXES = {".pyc", ".pyo", ".pyd"}
 
 
+def _is_safe_repo_rel_path(path_str: str) -> bool:
+    p = Path(path_str)
+    if p.is_absolute():
+        return False
+    return ".." not in p.parts
+
+
 def validate_task_dir(task_dir: Path) -> list[str]:
     errors: list[str] = []
     for path in task_dir.rglob("*"):
@@ -81,14 +88,49 @@ def validate_task_dir(task_dir: Path) -> list[str]:
         errors.append("Task id must match directory name")
 
     prompt_path = task_dir / task.prompt_file
-    if not prompt_path.exists() or not prompt_path.read_text(encoding="utf-8").strip():
+    prompt_text = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+    if not prompt_path.exists() or not prompt_text.strip():
         errors.append("prompt.txt must exist and be non-empty")
+    prompt_lower = prompt_text.lower()
+    if "hidden test" in prompt_lower or "hidden tests" in prompt_lower:
+        errors.append("prompt.txt must not mention hidden tests")
+    if "oracle" in prompt_lower:
+        errors.append("prompt.txt must not mention oracle")
 
+    oracle_docs: dict[str, dict] = {}
     for rel in ["oracle/expected_files.json", "oracle/allowed_files.json", "oracle/failure_modes.json"]:
         try:
-            json.loads((task_dir / rel).read_text(encoding="utf-8"))
+            oracle_docs[rel] = json.loads((task_dir / rel).read_text(encoding="utf-8"))
         except Exception as exc:
             errors.append(f"Invalid JSON {rel}: {exc}")
+
+    repo_dir = task_dir / "repo"
+    expected = oracle_docs.get("oracle/expected_files.json", {})
+    if not isinstance(expected, dict):
+        expected = {}
+    expected_files = expected.get("expected_files", []) + expected.get("strongly_expected_files", [])
+    for rel_path in expected_files:
+        if not _is_safe_repo_rel_path(rel_path):
+            errors.append(f"Expected file path is not repo-relative safe: {rel_path}")
+            continue
+        if not (repo_dir / rel_path).exists():
+            errors.append(f"Expected file does not exist in repo: {rel_path}")
+
+    allowed = oracle_docs.get("oracle/allowed_files.json", {})
+    if not isinstance(allowed, dict):
+        allowed = {}
+    allowed_files = allowed.get("allowed_code_files", [])
+    for rel_path in allowed_files:
+        if not _is_safe_repo_rel_path(rel_path):
+            errors.append(f"allowed_code_files path must be relative and inside repo: {rel_path}")
+            continue
+        if not (repo_dir / rel_path).exists():
+            errors.append(f"allowed_code_files path does not exist in repo: {rel_path}")
+
+    forbidden_patterns = allowed.get("forbidden_patterns", [])
+    has_test_protection = any(pattern in {"tests/", "tests", "/tests/", "\\tests\\"} for pattern in forbidden_patterns)
+    if not has_test_protection:
+        errors.append("Task must forbid test modifications in allowed_files.json")
     return errors
 
 

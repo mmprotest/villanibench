@@ -19,3 +19,5 @@ Before runner execution, the sandbox must expose only:
 `tests/hidden/` is copied in **only after** the runner has finished and post-run visible evaluation has been completed. This prevents hidden-test leakage to runners that inspect the filesystem during execution.
 
 Diff and patch-size analysis is computed only from `repo/` and `tests/visible/` snapshots around runner execution.
+
+Current core v0.1 coverage includes `minimal_patch` and `localisation` categories.
