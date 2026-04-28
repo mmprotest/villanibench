@@ -36,6 +36,12 @@ def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = 
         if not valid:
             continue
         raw = sum(1 for g in valid if g["status"] == "success") / len(valid)
+        visible_solve_rate = sum(1 for g in valid if g.get("success_visible")) / len(valid)
+        hidden_solve_rate = sum(1 for g in valid if g.get("success_hidden")) / len(valid)
+        timeout_rate = sum(1 for g in valid if g.get("status") == "timeout") / len(valid)
+        crash_rate = sum(1 for g in valid if g.get("status") == "runner_crash") / len(valid)
+        forbidden_modification_rate = sum(1 for g in valid if g.get("forbidden_file_modified")) / len(valid)
+        test_modification_rate = sum(1 for g in valid if g.get("tests_modified")) / len(valid)
         raw_scores.append({
             "runner": runner,
             "model": model,
@@ -43,6 +49,12 @@ def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = 
             "budget_profile": budget_profile,
             "comparison_mode": mode,
             "raw_solve_rate": raw,
+            "visible_solve_rate": visible_solve_rate,
+            "hidden_solve_rate": hidden_solve_rate,
+            "timeout_rate": timeout_rate,
+            "crash_rate": crash_rate,
+            "forbidden_modification_rate": forbidden_modification_rate,
+            "test_modification_rate": test_modification_rate,
             "valid_task_count": len(valid),
         })
         for g in valid:
@@ -81,10 +93,14 @@ def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = 
 def _render_report(summary: dict) -> str:
     lines = ["# VillaniBench Comparison Report", ""]
     lines += [
-        "## Main table",
+        "## VillaniBench Score",
         "",
-        "| Runner | Model | comparison_mode | VillaniBench Score | score_validity | raw_solve_rate | valid_task_count |",
-        "|---|---|---|---:|---|---:|---:|",
+        "This is the main score.",
+        "It is relative to `minimal_react_control`.",
+        "Raw solve rate is diagnostic only.",
+        "",
+        "| runner | model | comparison_mode | score_validity | VillaniBench Score | backend_stability_stddev | raw_solve_rate | valid_task_count |",
+        "|---|---|---|---|---:|---|---:|---:|",
     ]
 
     raw_index = {(r["runner"], r["model"], r["comparison_mode"]): r for r in summary["raw_scores"]}
@@ -93,7 +109,7 @@ def _render_report(summary: dict) -> str:
         score = row["model_villanibench_score"]
         score_text = "null" if score is None else f"{score:.3f}"
         lines.append(
-            f"| {row['runner']} | {row['model']} | {row['comparison_mode']} | {score_text} | {row.get('score_validity', 'not_computed')} | "
+            f"| {row['runner']} | {row['model']} | {row['comparison_mode']} | {row.get('score_validity', 'not_computed')} | {score_text} | n/a | "
             f"{raw.get('raw_solve_rate', 0.0):.3f} | {raw.get('valid_task_count', 0)} |"
         )
 
@@ -109,17 +125,43 @@ def _render_report(summary: dict) -> str:
             "**Warning:** all VillaniBench Scores are diagnostic or missing, so this report is not a benchmark ranking.",
         ]
 
+    lines += ["", "## Backend stability", ""]
+    lines += [
+        "| runner | models | mean_villanibench_score | backend_stability_stddev | acceptable_variance_target | stable? |",
+        "|---|---|---:|---|---:|---|",
+    ]
+    for row in summary.get("villanibench_scores_overall", []):
+        stddev = "insufficient_models" if row.get("backend_stability_stddev") is None else f"{row['backend_stability_stddev']:.3f}"
+        lines.append(
+            f"| {row['runner']} | {', '.join(row['models'])} | {row['mean_villanibench_score']:.3f} | {stddev} | "
+            f"{row['acceptable_variance_target']:.2f} | {row.get('stable', 'insufficient_models')} |"
+        )
+
     lines += ["", "## Category breakdown", ""]
+    lines += [
+        "| runner | model | category | control_solve_rate | runner_solve_rate | villanibench_score | valid_task_count |",
+        "|---|---|---|---:|---:|---:|---:|",
+    ]
     for row in summary["villanibench_scores_by_model"]:
-        lines.append(f"### {row['runner']} / {row['model']} / {row['comparison_mode']}")
-        lines.append("| Category | Control | Runner | Score |")
-        lines.append("|---|---:|---:|---:|")
         for c in row["category_scores"]:
             lines.append(
-                f"| {c['category']} | {c['control_solve_rate']:.3f} | {c['runner_solve_rate']:.3f} | {c['villanibench_score']:.3f} |"
+                f"| {row['runner']} | {row['model']} | {c['category']} | {c['control_solve_rate']:.3f} | "
+                f"{c['runner_solve_rate']:.3f} | {c['villanibench_score']:.3f} | {c['valid_task_count']} |"
             )
-        lines.append("")
-    lines += ["## Warnings", ""]
+
+    lines += ["", "## Raw solve-rate diagnostics", ""]
+    lines += [
+        "| runner | model | comparison_mode | raw_solve_rate | visible_solve_rate | hidden_solve_rate | timeout_rate | crash_rate | forbidden_modification_rate | test_modification_rate |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in summary["raw_scores"]:
+        lines.append(
+            f"| {row['runner']} | {row['model']} | {row['comparison_mode']} | {row['raw_solve_rate']:.3f} | {row['visible_solve_rate']:.3f} | "
+            f"{row['hidden_solve_rate']:.3f} | {row['timeout_rate']:.3f} | {row['crash_rate']:.3f} | "
+            f"{row['forbidden_modification_rate']:.3f} | {row['test_modification_rate']:.3f} |"
+        )
+
+    lines += ["", "## Warnings", ""]
     for w in summary.get("warnings", []):
         lines.append(f"- {w}")
     return "\n".join(lines) + "\n"

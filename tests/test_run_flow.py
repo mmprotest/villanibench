@@ -48,3 +48,17 @@ def test_external_fake_runner_end_to_end_fixes_task(tmp_path: Path, monkeypatch)
     assert "DEFAULT_RETRIES = 5" in diff_text
     assert "DEFAULT_RETRIES = 3" in diff_text
     assert "tests/hidden" not in diff_text
+
+
+def test_runner_created_hidden_tests_is_forbidden_modification(tmp_path: Path, monkeypatch):
+    adapter = ExternalCliAdapter(
+        "fake_external",
+        "python -c \"from pathlib import Path; Path('../tests/hidden').mkdir(parents=True, exist_ok=True); Path('../tests/hidden/evil.py').write_text('x=1')\"",
+    )
+    monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
+
+    out = tmp_path / "run"
+    run_suite(SUITE_DIR, "fake_external", "dummy", out, {})
+    result = json.loads((out / "tasks" / "VB-MIN-001/result.json").read_text(encoding='utf-8'))
+    assert result["status"] == "forbidden_modification"
+    assert "Runner created tests/hidden before evaluator copied hidden tests." in result["notes"]

@@ -1,4 +1,4 @@
-from villanibench.harness.scoring import aggregate_model_category_scores, villanibench_category_score
+from villanibench.harness.scoring import aggregate_model_category_scores, aggregate_overall, villanibench_category_score
 
 
 def test_scoring_equal_zero():
@@ -25,3 +25,18 @@ def test_category_first_and_missing_control_warning():
     scores, warnings = aggregate_model_category_scores(rows)
     assert scores[0]["model_villanibench_score"] is None
     assert warnings
+
+
+def test_aggregate_overall_insufficient_models():
+    rows = [{
+        "runner": "villani",
+        "model": "m",
+        "suite_id": "s",
+        "budget_profile": "b",
+        "comparison_mode": "strict",
+        "score_validity": "valid",
+        "model_villanibench_score": 0.2,
+    }]
+    out = aggregate_overall(rows)
+    assert out[0]["backend_stability_stddev"] is None
+    assert out[0]["stable"] == "insufficient_models"

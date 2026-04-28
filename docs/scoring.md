@@ -17,12 +17,15 @@ Category-first aggregation:
 
 Comparison output includes `score_validity`:
 - `valid`: control is model-backed and fully comparable (same suite, model, budget profile, and comparison mode).
-- `diagnostic_only`: score computed against placeholder control.
+- `diagnostic_only`: score computed against legacy placeholder control.
 - `not_computed`: no comparable control baseline.
 
-In v0, `minimal_react_control` is placeholder/non-model-backed, so scores are expected to be `diagnostic_only` unless replaced by a model-backed control adapter.
+`minimal_react_control` is model-backed by default in v0 and should produce valid scores when runs are comparable.
+Legacy results with `control_kind=placeholder` remain readable and are marked `diagnostic_only`.
 
 Strict/non-strict runs are separated and never mixed.
+
+Backend stability is reported as stddev across model-level VillaniBench Scores, with an acceptable variance target of 0.10.
 
 ## Status values used in scoring inputs
 

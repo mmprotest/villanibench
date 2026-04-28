@@ -52,3 +52,16 @@ def test_diff_analysis_add_delete_and_visible_tests_tracking(tmp_path: Path):
     assert stats.tests_modified is True
     assert stats.lines_added >= 2
     assert stats.lines_deleted >= 1
+
+
+def test_diff_analysis_marks_repo_tests_as_tests_modified(tmp_path: Path):
+    root = tmp_path / "sandbox"
+    (root / "repo/tests").mkdir(parents=True)
+    (root / "tests/visible").mkdir(parents=True)
+    t = root / "repo/tests/test_x.py"
+    t.write_text("def test_x():\n    assert True\n", encoding="utf-8")
+    task_dir = _mk_task_dir(tmp_path)
+    before = snapshot_files(root)
+    t.write_text("def test_x():\n    assert False\n", encoding="utf-8")
+    stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
+    assert stats.tests_modified is True

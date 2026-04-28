@@ -64,13 +64,19 @@ def aggregate_model_category_scores(rows: list[dict], control_runner: str = "min
             continue
 
         control_kind = control_rows[0].get("control_kind")
-        score_validity = "valid" if control_kind == "model_backed" else "diagnostic_only"
+        if control_kind is None and control_rows[0].get("runner") == control_runner:
+            control_kind = "unknown"
+            warnings.append("Control run missing control_kind; inferred unknown.")
+
+        score_validity = "valid"
         score_warning = None
-        if score_validity == "diagnostic_only":
-            score_warning = (
-                "VillaniBench Score is diagnostic only because minimal_react_control is a placeholder "
-                "and does not call the backend model."
-            )
+        if control_kind == "placeholder":
+            score_validity = "diagnostic_only"
+            score_warning = "VillaniBench Score is diagnostic only because control_kind=placeholder."
+            warnings.append(score_warning)
+        elif control_kind != "model_backed":
+            score_validity = "not_computed"
+            score_warning = "Control baseline is not model_backed; VillaniBench Score not computed."
             warnings.append(score_warning)
 
         categories = sorted({r["category"] for r in runner_rows})
@@ -94,7 +100,7 @@ def aggregate_model_category_scores(rows: list[dict], control_runner: str = "min
             })
 
         model_score = statistics.mean([c["villanibench_score"] for c in category_scores]) if category_scores else None
-        outputs.append({
+        output_row = {
             "runner": runner,
             "model": model,
             "suite_id": suite_id,
@@ -104,7 +110,11 @@ def aggregate_model_category_scores(rows: list[dict], control_runner: str = "min
             "model_villanibench_score": model_score,
             "score_validity": score_validity if model_score is not None else "not_computed",
             "score_warning": score_warning if model_score is not None else "No overlapping valid tasks with control; VillaniBench Score not computed.",
-        })
+            "valid_task_count": sum(c["valid_task_count"] for c in category_scores),
+        }
+        if score_validity == "not_computed":
+            output_row["model_villanibench_score"] = None
+        outputs.append(output_row)
     return outputs, sorted(set(warnings))
 
 
@@ -125,8 +135,9 @@ def aggregate_overall(vb_by_model: list[dict], target_stddev: float = 0.10) -> l
             "comparison_mode": mode,
             "score_validity": score_validity,
             "mean_villanibench_score": statistics.mean(scores),
-            "backend_stability_stddev": statistics.pstdev(scores) if len(scores) > 1 else 0.0,
+            "backend_stability_stddev": statistics.pstdev(scores) if len(scores) > 1 else None,
             "models": [r["model"] for r in rows],
             "acceptable_variance_target": target_stddev,
+            "stable": ("insufficient_models" if len(scores) < 2 else statistics.pstdev(scores) <= target_stddev),
         })
     return out
