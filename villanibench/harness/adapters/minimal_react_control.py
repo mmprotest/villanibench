@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -86,41 +87,68 @@ class MinimalReactControlAdapter(RunnerAdapter):
             return factory(config)
         return OpenAICompatibleChatClient(base_url=str(config["base_url"]), api_key=str(config.get("api_key") or "dummy"))
 
-    def _parse_action(self, text: str) -> tuple[str | None, dict[str, str]]:
-        lines = [line.rstrip("\n") for line in text.splitlines()]
-        if not lines or not lines[0].startswith("ACTION: "):
-            return None, {}
-        action = lines[0].split(":", 1)[1].strip()
+    def _parse_action(self, text: str) -> tuple[str | None, dict[str, str], str | None]:
+        cleaned = text.strip()
+        if not cleaned:
+            return None, {}, "missing_action"
+        lines = cleaned.splitlines()
+        action_pattern = re.compile(r"^\s*ACTION\s*:\s*([A-Za-z_]+)\s*$")
+        action_line_indexes = [idx for idx, line in enumerate(lines) if action_pattern.match(line)]
+        if not action_line_indexes:
+            return None, {}, "missing_action"
+        if len(action_line_indexes) > 1:
+            return None, {}, "multiple_action_blocks"
+        lines = lines[action_line_indexes[0] :]
+        action_match = action_pattern.match(lines[0])
+        if action_match is None:
+            return None, {}, "missing_action"
+        action = action_match.group(1).strip().lower()
         fields: dict[str, str] = {}
         i = 1
+        key_value_pattern = re.compile(r"^\s*([A-Z_]+)\s*:\s*(.*)$")
         while i < len(lines):
-            line = lines[i]
-            if line.startswith("CONTENT:"):
+            line = lines[i].rstrip("\n")
+            stripped = line.strip()
+            if not stripped:
+                i += 1
+                continue
+            if action_pattern.match(line):
+                return None, {}, "multiple_action_blocks"
+            if re.match(r"^\s*CONTENT\s*:\s*$", line):
                 i += 1
                 content_lines: list[str] = []
-                while i < len(lines) and lines[i] != "END_CONTENT":
+                while i < len(lines) and lines[i].strip() != "END_CONTENT":
                     content_lines.append(lines[i])
                     i += 1
+                if i >= len(lines):
+                    return None, {}, "missing_end_content"
                 fields["CONTENT"] = "\n".join(content_lines)
-            elif line.startswith("OLD:"):
+            elif re.match(r"^\s*OLD\s*:\s*$", line):
                 i += 1
                 old_lines: list[str] = []
-                while i < len(lines) and lines[i] != "END_OLD":
+                while i < len(lines) and lines[i].strip() != "END_OLD":
                     old_lines.append(lines[i])
                     i += 1
+                if i >= len(lines):
+                    return None, {}, "missing_end_old"
                 fields["OLD"] = "\n".join(old_lines)
-            elif line.startswith("NEW:"):
+            elif re.match(r"^\s*NEW\s*:\s*$", line):
                 i += 1
                 new_lines: list[str] = []
-                while i < len(lines) and lines[i] != "END_NEW":
+                while i < len(lines) and lines[i].strip() != "END_NEW":
                     new_lines.append(lines[i])
                     i += 1
+                if i >= len(lines):
+                    return None, {}, "missing_end_new"
                 fields["NEW"] = "\n".join(new_lines)
-            elif ":" in line:
-                key, value = line.split(":", 1)
-                fields[key.strip()] = value.strip()
+            else:
+                kv = key_value_pattern.match(line)
+                if kv:
+                    fields[kv.group(1).strip()] = kv.group(2).strip()
+                else:
+                    return None, {}, "invalid_field_line"
             i += 1
-        return action, fields
+        return action, fields, None
 
     def _action_signature(self, action: str | None, fields: dict[str, str]) -> str:
         if action is None:
@@ -276,30 +304,46 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     runner_notes = append_note(runner_notes, f"minimal_react_control backend request failed: {exc}")
                     break
 
-                action, fields = self._parse_action(response.content)
-                action_signature = self._action_signature(action, fields)
-                if action_signature == previous_signature:
-                    repeated_action_count += 1
-                else:
-                    previous_signature = action_signature
-                    repeated_action_count = 1
-
+                action, fields, parse_error = self._parse_action(response.content)
                 obs = ""
-                action_valid = True
-                error: str | None = None
-                skip_execute_due_repeat = repeated_action_count >= 3 and action_signature in {
-                    "invalid_action",
-                    "run_tests",
-                } or (repeated_action_count >= 3 and action in {"list_files", "read_file", "search"})
+                action_valid = parse_error is None
+                error: str | None = parse_error
+                executed = False
+                skip_execute_due_repeat = False
+                if action_valid:
+                    action_signature = self._action_signature(action, fields)
+                    if action_signature == previous_signature:
+                        repeated_action_count += 1
+                    else:
+                        previous_signature = action_signature
+                        repeated_action_count = 1
+                    skip_execute_due_repeat = (repeated_action_count >= 3 and action == "run_tests") or (
+                        repeated_action_count >= 3 and action in {"list_files", "read_file", "search"}
+                    )
+                else:
+                    action_signature = ""
+                    repeated_action_count = 0
 
-                if skip_execute_due_repeat:
+                if parse_error is not None:
+                    invalid_actions += 1
+                    obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/replace_text/finish."
+                    if invalid_actions > 3:
+                        runner_crashed = True
+                        exit_code = 1
+                        crash_reason = "too many invalid actions"
+                        runner_notes = append_note(runner_notes, "minimal_react_control stopped after too many invalid actions.")
+                        messages.append(ChatMessage(role="assistant", content=response.content))
+                        messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+                        break
+                elif skip_execute_due_repeat:
                     blocked_repeat_count += 1
                     obs = (
                         "You have already performed this action several times without progress. "
                         "Choose a different action: search, read_file, run_tests, replace_text, write_file, or finish."
                     )
-                    error = "blocked_repeat"
+                    error = "blocked_repeated_action"
                 elif action == "list_files":
+                    executed = True
                     rel_path = fields.get("PATH", ".")
                     base = resolve_repo_path(repo_root, rel_path)
                     if base is None or not base.exists() or not base.is_dir():
@@ -312,6 +356,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         )
                         obs = "\n".join(files[:200]) if files else "(no files)"
                 elif action == "read_file":
+                    executed = True
                     rel_path = fields.get("PATH", "")
                     file_path = resolve_repo_path(repo_root, rel_path)
                     if (
@@ -326,6 +371,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         text = file_path.read_text(encoding="utf-8", errors="replace")
                         obs = text[:16000] + ("\n...[TRUNCATED]..." if len(text) > 16000 else "")
                 elif action == "search":
+                    executed = True
                     query = fields.get("QUERY", "")
                     rel_path = fields.get("PATH")
                     if not query:
@@ -354,6 +400,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                 break
                         obs = "\n".join(results) if results else "(no matches)"
                 elif action == "run_tests":
+                    executed = True
                     if (self._telem.shell_commands or 0) >= budget.max_shell_commands:
                         obs = "Shell command budget exceeded."
                     else:
@@ -373,6 +420,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         except subprocess.TimeoutExpired:
                             obs = "run_tests timed out."
                 elif action == "write_file":
+                    executed = True
                     rel_path = fields.get("PATH", "")
                     if rel_path.startswith("tests/") or "/tests/" in rel_path or "\\tests\\" in rel_path or rel_path.startswith("repo/tests/"):
                         obs = "Refused: tests modification is not allowed."
@@ -395,6 +443,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             repeated_action_count = 0
                             obs = "write_file ok"
                 elif action == "replace_text":
+                    executed = True
                     rel_path = fields.get("PATH", "")
                     if rel_path.startswith("tests/") or "/tests/" in rel_path or "\\tests\\" in rel_path or rel_path.startswith("repo/tests/"):
                         obs = "Refused: tests modification is not allowed."
@@ -436,6 +485,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                         repeated_action_count = 0
                                         obs = "replace_text ok"
                 elif action == "finish":
+                    executed = True
                     if wrote_files and (last_visible_test_step is None or (last_write_step is not None and last_visible_test_step <= last_write_step)):
                         blocked_finish_attempts += 1
                         obs = "You modified files but have not run visible tests after the latest edit. Run ACTION: run_tests before finishing."
@@ -460,8 +510,12 @@ class MinimalReactControlAdapter(RunnerAdapter):
                 else:
                     invalid_actions += 1
                     action_valid = False
-                    error = "parse_error"
-                    obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/replace_text/finish."
+                    error = "unknown_action"
+                    executed = False
+                    obs = (
+                        "Unknown action. Use one of "
+                        "list_files/read_file/search/run_tests/write_file/replace_text/finish."
+                    )
                     if invalid_actions > 3:
                         runner_crashed = True
                         exit_code = 1
@@ -471,6 +525,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
                         break
 
+                if action_valid and error is None:
+                    invalid_actions = 0
                 if repeated_action_count == 2 and not skip_execute_due_repeat:
                     obs = (
                         f"{obs}\nYou repeated the same action. "
@@ -497,6 +553,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             "parsed_action": action,
                             "parsed_args": fields,
                             "valid_action": action_valid,
+                            "executed": executed and error is None,
                             "tool_result": tool_result,
                             "tool_result_truncated": tool_trunc,
                             "error": error,

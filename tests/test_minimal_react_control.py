@@ -460,6 +460,8 @@ def test_control_trace_logs_invalid_action(tmp_path: Path):
     _run_adapter(adapter, adapter._chat_client, sandbox, out)
     lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
     assert lines[0]["valid_action"] is False
+    assert lines[0]["parsed_action"] is None
+    assert lines[0]["error"] == "missing_action"
 
 
 def test_repeated_list_files_loop_crashes_with_note(tmp_path: Path):
@@ -473,6 +475,11 @@ def test_repeated_list_files_loop_crashes_with_note(tmp_path: Path):
     res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
     assert res.runner_crashed is True
     assert res.notes and "repeated identical actions" in res.notes
+    lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    blocked = [line for line in lines if line.get("error") == "blocked_repeated_action"]
+    assert blocked
+    assert blocked[0]["parsed_action"] == "list_files"
+    assert blocked[0]["valid_action"] is True
 
 
 def test_repeat_recovery_can_continue_to_success(tmp_path: Path):
@@ -496,6 +503,104 @@ def test_repeat_recovery_can_continue_to_success(tmp_path: Path):
     (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
     res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
     assert res.runner_crashed is False
+
+
+def test_invalid_then_valid_action_executes(tmp_path: Path):
+    responses = [
+        "I should inspect the repo.",
+        "No action yet.",
+        "\n\nACTION: list_files\nPATH: .",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "repo/src/app.py").write_text("print('ok')\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    assert res.runner_crashed is False
+    lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines[2]["parsed_action"] == "list_files"
+    assert lines[2]["valid_action"] is True
+    assert "src/app.py" in lines[2]["tool_result"]
+
+
+def test_parse_action_tolerates_whitespace_and_preamble():
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(["ACTION: finish\nREASON: done"]))
+    action, fields, error = adapter._parse_action("Looking at this task.\n\n  ACTION:list_files\n PATH : .\n")
+    assert error is None
+    assert action == "list_files"
+    assert fields["PATH"] == "."
+
+
+def test_parse_action_rejects_multiple_action_blocks():
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(["ACTION: finish\nREASON: done"]))
+    action, fields, error = adapter._parse_action("ACTION: list_files\nPATH: .\n\nACTION: read_file\nPATH: src/a.py\n")
+    assert action is None
+    assert fields == {}
+    assert error == "multiple_action_blocks"
+
+
+def test_parse_action_preserves_replace_text_blocks_with_preamble():
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(["ACTION: finish\nREASON: done"]))
+    action, fields, error = adapter._parse_action(
+        "I found the constant.\n\nACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES = 5\nEND_OLD\nNEW:\nDEFAULT_RETRIES = 3\nEND_NEW"
+    )
+    assert error is None
+    assert action == "replace_text"
+    assert fields["OLD"] == "DEFAULT_RETRIES = 5"
+    assert fields["NEW"] == "DEFAULT_RETRIES = 3"
+
+
+def test_parse_action_invalid_replace_text_delimiter_is_rejected():
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(["ACTION: finish\nREASON: done"]))
+    action, fields, error = adapter._parse_action(
+        "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES = 5\nNEW:\nDEFAULT_RETRIES = 3\nEND_NEW"
+    )
+    assert action is None
+    assert fields == {}
+    assert error == "missing_end_old"
+
+
+def test_action_with_preamble_is_valid_in_trace(tmp_path: Path):
+    responses = [
+        "Looking at the task, I should inspect the repo.\n\nACTION: list_files\nPATH: .",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["parsed_action"] == "list_files"
+    assert lines[0]["valid_action"] is True
+
+
+def test_run_tests_ignores_extra_path_fields(tmp_path: Path):
+    responses = [
+        "ACTION: run_tests\nPATH: tests/visible",
+        "ACTION: run_tests\nPATH: .",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "tests/visible").mkdir(parents=True)
+    (sandbox / "tests/visible/test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["parsed_action"] == "run_tests"
+    assert lines[0]["valid_action"] is True
+    assert lines[1]["parsed_action"] == "run_tests"
+    assert "tests/hidden" not in (out / "control_trace.jsonl").read_text(encoding="utf-8")
 
 
 def test_max_model_calls_sets_budget_exceeded_note(tmp_path: Path):
