@@ -10,6 +10,21 @@ from villanibench.harness.telemetry import Telemetry
 from .base import AdapterRunResult, RunnerAdapter, now_iso
 
 
+IGNORED_PATH_PARTS = {
+    "__pycache__",
+    ".pytest_cache",
+    ".git",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+    ".venv",
+    "venv",
+    "node_modules",
+}
+IGNORED_SUFFIXES = {".pyc", ".pyo", ".pyd"}
+
+
 def resolve_repo_path(repo_root: Path, raw_path: str) -> Path | None:
     if not raw_path:
         return None
@@ -22,6 +37,15 @@ def resolve_repo_path(repo_root: Path, raw_path: str) -> Path | None:
     except ValueError:
         return None
     return candidate
+
+
+def should_ignore_path(path: Path, root: Path) -> bool:
+    rel = path.relative_to(root)
+    if any(part in IGNORED_PATH_PARTS for part in rel.parts):
+        return True
+    if path.suffix in IGNORED_SUFFIXES:
+        return True
+    return any(part.endswith(".egg-info") for part in rel.parts)
 
 
 class MinimalReactControlAdapter(RunnerAdapter):
@@ -178,7 +202,11 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     if base is None or not base.exists() or not base.is_dir():
                         obs = "Invalid PATH. Use relative directory under repo."
                     else:
-                        files = sorted(p.relative_to(repo_root).as_posix() for p in base.rglob("*") if p.is_file())
+                        files = sorted(
+                            p.relative_to(repo_root).as_posix()
+                            for p in base.rglob("*")
+                            if p.is_file() and not should_ignore_path(p, repo_root)
+                        )
                         obs = "\n".join(files[:200]) if files else "(no files)"
                 elif action == "read_file":
                     rel_path = fields.get("PATH", "")
@@ -211,7 +239,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             search_root = resolved
                         results: list[str] = []
                         for p in search_root.rglob("*"):
-                            if not p.is_file() or any(part in {".git", "__pycache__", ".pytest_cache", ".venv", "venv"} for part in p.parts):
+                            if not p.is_file() or should_ignore_path(p, repo_root):
                                 continue
                             txt = p.read_text(encoding="utf-8", errors="ignore")
                             for idx, line in enumerate(txt.splitlines(), start=1):

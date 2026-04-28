@@ -4,6 +4,7 @@ import json
 import subprocess
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from villanibench.harness.adapters import build_adapter
@@ -15,9 +16,47 @@ from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evalua
 from villanibench.tasks.loader import load_suite
 
 
-def run_cmd(command: str, cwd: Path) -> tuple[int, str, str]:
-    proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True)
-    return proc.returncode, proc.stdout, proc.stderr
+@dataclass
+class CommandResult:
+    exit_code: int
+    stdout: str
+    stderr: str
+    timed_out: bool = False
+    wall_time_sec: float = 0.0
+
+
+def resolve_test_command_timeout_sec(budget_wall_time_sec: float, remaining_wall_time_sec: float | None = None) -> float:
+    timeout_sec = min(60.0, max(5.0, float(budget_wall_time_sec) / 4.0))
+    if remaining_wall_time_sec is not None:
+        timeout_sec = min(timeout_sec, max(5.0, float(remaining_wall_time_sec)))
+    return timeout_sec
+
+
+def run_cmd(command: str, cwd: Path, timeout_sec: float) -> CommandResult:
+    started = time.monotonic()
+    try:
+        proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True, timeout=timeout_sec)
+        elapsed = time.monotonic() - started
+        return CommandResult(
+            exit_code=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            timed_out=False,
+            wall_time_sec=elapsed,
+        )
+    except subprocess.TimeoutExpired as exc:
+        elapsed = time.monotonic() - started
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ((exc.stdout or b"").decode(errors="replace"))
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ((exc.stderr or b"").decode(errors="replace"))
+        timeout_message = f"Command timed out after {timeout_sec:.1f}s"
+        stderr = f"{stderr.rstrip()}\n{timeout_message}".strip()
+        return CommandResult(
+            exit_code=124,
+            stdout=stdout,
+            stderr=stderr,
+            timed_out=True,
+            wall_time_sec=elapsed,
+        )
 
 
 def classify_status(result: TaskResult) -> str:
@@ -50,20 +89,32 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
     for task in tasks:
         task_output = output_dir / "tasks" / task.id
         task_output.mkdir(parents=True, exist_ok=True)
-        budget = get_budget_profile(task.budget_profile or suite.budget_profile)
+        resolved_budget_profile_id = task.budget_profile or suite.budget_profile
+        if not resolved_budget_profile_id:
+            raise RuntimeError(f"No budget profile configured for task {task.id} or suite {suite.id}")
+        budget = get_budget_profile(resolved_budget_profile_id)
         result = TaskResult(
             run_id=run_id,
             suite_id=suite.id,
             task_id=task.id,
             runner=adapter.name,
             model=model,
-            budget_profile=task.budget_profile,
+            budget_profile=resolved_budget_profile_id,
             category=task.category,
         )
         try:
             sandbox, _repo = prepare_sandbox(task, task_output)
-            pre_visible_code, _, pre_visible_err = run_cmd(task.visible_test_command, sandbox)
-            if pre_visible_code == 0:
+            test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
+            pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            result.preflight_visible_timed_out = pre_visible.timed_out
+            if pre_visible.timed_out:
+                result.status = "invalid_task"
+                result.notes = append_note(result.notes, "Preflight visible test command timed out.")
+                result.notes = append_note(result.notes, pre_visible.stderr.strip()[:500])
+                (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+                results.append(result)
+                continue
+            if pre_visible.exit_code == 0:
                 result.status = "invalid_task"
                 result.notes = "Visible tests pass before runner"
                 (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
@@ -100,8 +151,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.expected_file_touched = diff_stats.expected_file_touched
             result.decoy_file_touched = diff_stats.decoy_file_touched
 
-            post_visible_code, _, _ = run_cmd(task.visible_test_command, sandbox)
-            result.success_visible = post_visible_code == 0
+            post_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            result.post_visible_timed_out = post_visible.timed_out
+            result.success_visible = post_visible.exit_code == 0 and not post_visible.timed_out
+            if post_visible.timed_out:
+                result.notes = append_note(result.notes, "Post-run visible test command timed out.")
+                result.notes = append_note(result.notes, post_visible.stderr.strip()[:500])
             if not result.timed_out:
                 if (sandbox / "tests" / "hidden").exists():
                     result.forbidden_file_modified = True
@@ -109,8 +164,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                     result.notes = append_note(result.notes, note)
                     raise RuntimeError(note)
                 copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
-                post_hidden_code, _, _ = run_cmd(task.hidden_test_command, sandbox)
-                result.success_hidden = post_hidden_code == 0
+                post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
+                result.hidden_timed_out = post_hidden.timed_out
+                result.success_hidden = post_hidden.exit_code == 0 and not post_hidden.timed_out
+                if post_hidden.timed_out:
+                    result.notes = append_note(result.notes, "Hidden test command timed out.")
+                    result.notes = append_note(result.notes, post_hidden.stderr.strip()[:500])
 
             telem = adapter.collect_telemetry(sandbox)
             result.model_calls = telem.model_calls
@@ -123,8 +182,8 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.missing_telemetry = telem.missing_telemetry
 
             result.status = classify_status(result)
-            if pre_visible_err:
-                result.notes = append_note(result.notes, pre_visible_err.strip()[:500])
+            if pre_visible.stderr:
+                result.notes = append_note(result.notes, pre_visible.stderr.strip()[:500])
             if result.runner_crashed and result.status == "success":
                 note = "Runner exited non-zero but final state passed visible and hidden tests."
                 result.notes = append_note(result.notes, note)
@@ -148,6 +207,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         "suite_id": suite.id,
         "runner": adapter.name,
         "model": model,
+        "budget_profiles": sorted({r.budget_profile for r in results if r.budget_profile}),
         "task_count": len(results),
         "statuses": {
             s: sum(1 for r in results if r.status == s)

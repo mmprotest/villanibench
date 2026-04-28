@@ -120,3 +120,27 @@ def test_compare_backend_stability_section(tmp_path: Path):
     overall = summary["villanibench_scores_overall"][0]
     assert overall["backend_stability_stddev"] is not None
     assert overall["stable"] is True
+
+
+def test_report_includes_raw_diagnostics_when_no_valid_scores(tmp_path: Path):
+    runner = tmp_path / "runner"
+    _write_rows(runner, [{
+        "runner": "villani",
+        "model": "dummy",
+        "suite_id": "villanibench-core-v0.1",
+        "comparison_mode": "strict",
+        "budget_profile": "lite_v0_1",
+        "category": "minimal_patch",
+        "task_id": "VB-MIN-001",
+        "status": "success",
+        "success_visible": True,
+        "success_hidden": True,
+        "forbidden_file_modified": False,
+        "tests_modified": False,
+        "control_kind": None,
+        "setting_warnings": [],
+    }])
+    compare_runs([runner], tmp_path / "out")
+    report = (tmp_path / "out/REPORT.md").read_text(encoding="utf-8")
+    assert "No valid VillaniBench Score is available for this comparison. See raw diagnostics below." in report
+    assert "## Raw solve-rate diagnostics" in report

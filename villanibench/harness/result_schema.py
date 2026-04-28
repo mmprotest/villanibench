@@ -44,6 +44,9 @@ class TaskResult:
     budget_exceeded: bool = False
     runner_crashed: bool = False
     timed_out: bool = False
+    preflight_visible_timed_out: bool = False
+    post_visible_timed_out: bool = False
+    hidden_timed_out: bool = False
     telemetry_completeness: str = "partial"
     missing_telemetry: list[str] = field(default_factory=list)
     notes: str | None = None

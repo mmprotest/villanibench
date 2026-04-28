@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -65,6 +66,21 @@ class SequencedChatClient:
         idx = min(self.call_index, len(script) - 1)
         self.call_index += 1
         return ChatResponse(script[idx], prompt_tokens=1, completion_tokens=1)
+
+
+class ObservationCheckingChatClient:
+    def __init__(self, actions: list[str], checks: list[Callable[[str], None]]):
+        self.actions = actions
+        self.checks = checks
+        self.calls = 0
+
+    def create_chat_completion(self, *, model: str, messages: list[ChatMessage], max_tokens: int, temperature: int) -> ChatResponse:
+        if self.calls > 0 and self.calls - 1 < len(self.checks):
+            observation = messages[-1].content
+            self.checks[self.calls - 1](observation)
+        idx = min(self.calls, len(self.actions) - 1)
+        self.calls += 1
+        return ChatResponse(self.actions[idx], prompt_tokens=1, completion_tokens=1)
 
 
 def _run_adapter(adapter: MinimalReactControlAdapter, chat_client: SequencedChatClient | ScriptedChatClient, sandbox_dir: Path, output_dir: Path):
@@ -295,3 +311,40 @@ def test_minimal_control_requires_base_url_cli():
             "--output-dir",
             "artifacts/runs/control_dummy",
         ])
+
+
+def test_list_files_ignores_generated_artifacts(tmp_path: Path):
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src/__pycache__").mkdir(parents=True)
+    (sandbox / "repo/src/app.py").write_text("print('ok')\n", encoding="utf-8")
+    (sandbox / "repo/src/__pycache__/app.cpython.pyc").write_bytes(b"cached")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+
+    def _check(obs: str) -> None:
+        assert "src/app.py" in obs
+        assert "__pycache__" not in obs
+        assert ".pyc" not in obs
+
+    client = ObservationCheckingChatClient(["ACTION: list_files\nPATH: .", "ACTION: finish\nREASON: done"], [_check])
+    adapter = MinimalReactControlAdapter(chat_client=client)
+    _run_adapter(adapter, client, sandbox, out)
+
+
+def test_search_ignores_generated_artifacts(tmp_path: Path):
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src/__pycache__").mkdir(parents=True)
+    (sandbox / "repo/src/app.py").write_text("ACTIVE_TOKEN='real'\n", encoding="utf-8")
+    (sandbox / "repo/src/__pycache__/cache.pyc").write_text("SECRET_ONLY_IN_CACHE", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+
+    def _check(obs: str) -> None:
+        assert "SECRET_ONLY_IN_CACHE" not in obs
+        assert "(no matches)" in obs
+
+    client = ObservationCheckingChatClient(["ACTION: search\nQUERY: SECRET_ONLY_IN_CACHE", "ACTION: finish\nREASON: done"], [_check])
+    adapter = MinimalReactControlAdapter(chat_client=client)
+    _run_adapter(adapter, client, sandbox, out)
