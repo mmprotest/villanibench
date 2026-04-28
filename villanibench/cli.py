@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> None:
             "base_url": args.base_url,
             "api_key": args.api_key or "dummy",
             "command_template": _resolve_command_template(args),
+            "log_progress": True,
         }
         summary = run_suite(Path(args.suite), args.runner, args.model, Path(args.output_dir), cfg)
         print(json.dumps(summary, indent=2))
