@@ -1,0 +1,11 @@
+id: VB-MIN-003
+title: Fix empty project-name validation message source of truth
+category: minimal_patch
+difficulty: easy
+language: python
+framework: pytest
+prompt_file: prompt.txt
+repo_dir: repo
+visible_test_command: pytest tests/visible -q
+hidden_test_command: pytest tests/hidden -q
+budget_profile: lite_v0_1

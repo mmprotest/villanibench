@@ -9,6 +9,7 @@ from pathlib import Path
 from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
+from villanibench.harness.notes import append_note
 from villanibench.harness.result_schema import TaskResult
 from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
 from villanibench.tasks.loader import load_suite
@@ -105,7 +106,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 if (sandbox / "tests" / "hidden").exists():
                     result.forbidden_file_modified = True
                     note = "Runner created tests/hidden before evaluator copied hidden tests."
-                    result.notes = f"{result.notes}\n{note}" if result.notes else note
+                    result.notes = append_note(result.notes, note)
                     raise RuntimeError(note)
                 copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
                 post_hidden_code, _, _ = run_cmd(task.hidden_test_command, sandbox)
@@ -123,17 +124,17 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
 
             result.status = classify_status(result)
             if pre_visible_err:
-                result.notes = pre_visible_err.strip()[:500]
+                result.notes = append_note(result.notes, pre_visible_err.strip()[:500])
             if result.runner_crashed and result.status == "success":
                 note = "Runner exited non-zero but final state passed visible and hidden tests."
-                result.notes = f"{result.notes}\n{note}" if result.notes else note
+                result.notes = append_note(result.notes, note)
         except Exception as exc:
             message = str(exc)
             if "Runner created tests/hidden before evaluator copied hidden tests." in message:
                 result.status = "forbidden_modification"
             else:
                 result.status = "harness_error"
-            result.notes = message
+            result.notes = append_note(result.notes, message)
         (task_output / "result.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
         results.append(result)
 
