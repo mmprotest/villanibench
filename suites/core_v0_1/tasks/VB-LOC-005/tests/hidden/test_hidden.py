@@ -6,5 +6,5 @@ sys.path.insert(0, str(ROOT / 'repo' / 'src'))
 
 from notifications.send import should_send_marketing_email
 
-def test_account_default_used_when_user_pref_missing():
-    assert should_send_marketing_email(None, False, True) is False
+def test_user_opt_in_beats_account_default_false():
+    assert should_send_marketing_email(True, False, False) is True

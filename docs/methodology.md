@@ -21,3 +21,7 @@ Before runner execution, the sandbox must expose only:
 Diff and patch-size analysis is computed only from `repo/` and `tests/visible/` snapshots around runner execution.
 
 Current core v0.1 coverage includes `minimal_patch` and `localisation` categories.
+
+## Behavioural validation
+
+Use `villanibench validate-behavior <suite_path>` to verify each task is behaviourally valid before benchmark runs. This evaluator-only check runs task visible tests and hidden tests in a temporary sandbox before any fix and requires both to fail without timeout.

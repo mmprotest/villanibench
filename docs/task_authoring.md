@@ -20,3 +20,10 @@ For `localisation` tasks:
 - Make the expected file discoverable through call-chain/code reading, not by naming it in the prompt.
 - Keep hidden tests focused on a different edge case than visible tests.
 - Include `edited_decoy_file` in `oracle/failure_modes.json` and list decoy paths in `decoy_files` metadata when possible.
+
+## Behavioural requirements
+
+- Visible tests must fail before any fix is applied.
+- Hidden tests must fail before any fix is applied.
+- Hidden tests must include at least one hidden bug-revealing case, not only preservation cases.
+- Avoid mathematically commutative bug setups that make hidden cases meaningless (for example percentage discount/tax order can commute); prefer non-commutative setups such as fixed discount amount then tax.

@@ -6,5 +6,5 @@ sys.path.insert(0, str(ROOT / 'repo' / 'src'))
 
 from invoice.export import export_invoice_total
 
-def test_zero_discount_is_stable():
-    assert export_invoice_total(80.0, 0.0, 0.15) == 92.0
+def test_discount_amount_applied_before_tax():
+    assert export_invoice_total(200.0, 25.0, 0.10) == 192.5

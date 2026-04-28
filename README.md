@@ -19,6 +19,22 @@ villanibench validate-suite suites/core_v0_1
 ```
 
 ```bash
+villanibench validate-behavior suites/core_v0_1
+```
+
+Recommended pre-run sequence:
+
+```bash
+python -m pytest -q
+villanibench validate-suite suites/core_v0_1
+villanibench validate-behavior suites/core_v0_1
+```
+
+Structural and behavioural validation are different:
+- structural validation checks schema/files and task packaging
+- behavioural validation checks visible+hidden tests fail before any fix
+
+```bash
 villanibench run \
   --suite suites/core_v0_1 \
   --runner minimal_react_control \

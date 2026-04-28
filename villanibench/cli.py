@@ -8,7 +8,7 @@ from pathlib import Path
 from villanibench.harness.compare import compare_runs
 from villanibench.harness.report import generate_report
 from villanibench.harness.run import run_suite
-from villanibench.tasks.validation import validate_suite_dir, validate_task_dir
+from villanibench.tasks.validation import validate_suite_behavior, validate_suite_dir, validate_task_dir
 
 
 def _add_common_runner_args(p: argparse.ArgumentParser) -> None:
@@ -55,6 +55,8 @@ def main(argv: list[str] | None = None) -> None:
 
     vs_p = sub.add_parser("validate-suite")
     vs_p.add_argument("suite_dir")
+    vb_p = sub.add_parser("validate-behavior")
+    vb_p.add_argument("suite_dir")
 
     args = parser.parse_args(argv)
 
@@ -76,6 +78,28 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"- {e}")
             raise SystemExit(1)
         print("OK")
+        return
+    if args.cmd == "validate-behavior":
+        ok, rows = validate_suite_behavior(Path(args.suite_dir))
+        for row in rows:
+            if row["ok"]:
+                print(f"{row['task_id']}: OK visible_pre_fails=true hidden_pre_fails=true")
+            else:
+                issues: list[str] = []
+                if not row["visible_pre_fails"]:
+                    issues.append("visible tests passed before fix")
+                if not row["hidden_pre_fails"]:
+                    issues.append("hidden tests passed before fix")
+                if row["visible_timed_out"]:
+                    issues.append("visible test command timed out")
+                if row["hidden_timed_out"]:
+                    issues.append("hidden test command timed out")
+                print(f"{row['task_id']}: FAIL {'; '.join(issues)}")
+        report_dir = Path("artifacts/validation")
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "behavior_summary.json").write_text(json.dumps({"suite": args.suite_dir, "results": rows}, indent=2), encoding="utf-8")
+        if not ok:
+            raise SystemExit(1)
         return
 
     if args.cmd == "run":
