@@ -6,6 +6,7 @@ import pytest
 
 from villanibench.cli import main
 from villanibench.harness.adapters.minimal_react_control import MinimalReactControlAdapter
+from villanibench.harness.budget import BudgetProfile
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.llm import ChatMessage, ChatResponse
 from villanibench.harness.run import run_suite
@@ -89,6 +90,15 @@ class ObservationCheckingChatClient:
         idx = min(self.calls, len(self.actions) - 1)
         self.calls += 1
         return ChatResponse(self.actions[idx], prompt_tokens=1, completion_tokens=1)
+
+
+class PromptCaptureClient:
+    def __init__(self):
+        self.system_prompt = ""
+
+    def create_chat_completion(self, *, model: str, messages: list[ChatMessage], max_tokens: int, temperature: int) -> ChatResponse:
+        self.system_prompt = messages[0].content
+        return ChatResponse("ACTION: finish\nREASON: done", prompt_tokens=1, completion_tokens=1)
 
 
 def _run_adapter(adapter: MinimalReactControlAdapter, chat_client: SequencedChatClient | ScriptedChatClient, sandbox_dir: Path, output_dir: Path):
@@ -418,3 +428,101 @@ def test_search_ignores_generated_artifacts(tmp_path: Path):
     client = ObservationCheckingChatClient(["ACTION: search\nQUERY: SECRET_ONLY_IN_CACHE", "ACTION: finish\nREASON: done"], [_check])
     adapter = MinimalReactControlAdapter(chat_client=client)
     _run_adapter(adapter, client, sandbox, out)
+
+
+def test_control_trace_written_with_action_and_observation(tmp_path: Path):
+    responses = ["ACTION: list_files\nPATH: .", "ACTION: finish\nREASON: done"]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "repo/src/app.py").write_text("print('ok')\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    trace = out / "control_trace.jsonl"
+    assert trace.exists()
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["model_output"].startswith("ACTION: list_files")
+    assert lines[0]["parsed_action"] == "list_files"
+    assert "src/app.py" in lines[0]["tool_result"]
+    assert "tests/hidden" not in trace.read_text(encoding="utf-8")
+
+
+def test_control_trace_logs_invalid_action(tmp_path: Path):
+    responses = ["hello", "ACTION: finish\nREASON: done"]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    lines = [json.loads(line) for line in (out / "control_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["valid_action"] is False
+
+
+def test_repeated_list_files_loop_crashes_with_note(tmp_path: Path):
+    responses = ["ACTION: list_files\nPATH: ."] * 6
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    assert res.runner_crashed is True
+    assert res.notes and "repeated identical actions" in res.notes
+
+
+def test_repeat_recovery_can_continue_to_success(tmp_path: Path):
+    responses = [
+        "ACTION: list_files\nPATH: .",
+        "ACTION: list_files\nPATH: .",
+        "ACTION: search\nQUERY: DEFAULT_RETRIES",
+        "ACTION: read_file\nPATH: src/demo_cli/config.py",
+        "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES=5\nEND_OLD\nNEW:\nDEFAULT_RETRIES=3\nEND_NEW",
+        "ACTION: run_tests",
+        "ACTION: finish\nREASON: done",
+    ]
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src/demo_cli").mkdir(parents=True)
+    (sandbox / "repo/src/demo_cli/config.py").write_text("DEFAULT_RETRIES=5\n", encoding="utf-8")
+    (sandbox / "tests/visible").mkdir(parents=True)
+    (sandbox / "tests/visible/test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    res = _run_adapter(adapter, adapter._chat_client, sandbox, out)
+    assert res.runner_crashed is False
+
+
+def test_max_model_calls_sets_budget_exceeded_note(tmp_path: Path):
+    responses = ["ACTION: list_files\nPATH: ."] * 5
+    adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(responses))
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    budget = BudgetProfile(120, 2, 100, 100, 10, 10, 10, 10, 4096, 0)
+    res = adapter.run(VB_MIN_001, sandbox, budget, {"task_output_dir": str(out), "model": "dummy", "base_url": "http://localhost"})
+    assert res.budget_exceeded is True
+    assert res.notes and "max_model_calls" in res.notes
+
+
+def test_system_prompt_contains_workflow_and_no_hidden_paths(tmp_path: Path):
+    client = PromptCaptureClient()
+    adapter = MinimalReactControlAdapter(chat_client=client)
+    sandbox = tmp_path / "sandbox"
+    out = tmp_path / "out"
+    out.mkdir()
+    (sandbox / "repo/src").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("fix", encoding="utf-8")
+    _run_adapter(adapter, client, sandbox, out)
+    prompt = client.system_prompt
+    assert "Use this default workflow" in prompt
+    assert "Do not assume hidden tests." in prompt
+    assert "tests/hidden" not in prompt
+    assert "oracle" not in prompt.lower()

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import time
 from pathlib import Path
 
 from villanibench.harness.llm import ChatClient, ChatMessage, OpenAICompatibleChatClient
+from villanibench.harness.notes import append_note
 from villanibench.harness.telemetry import Telemetry
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
@@ -23,6 +26,7 @@ IGNORED_PATH_PARTS = {
     "node_modules",
 }
 IGNORED_SUFFIXES = {".pyc", ".pyo", ".pyd"}
+TRACE_TEXT_LIMIT = 8000
 
 
 def resolve_repo_path(repo_root: Path, raw_path: str) -> Path | None:
@@ -46,6 +50,16 @@ def should_ignore_path(path: Path, root: Path) -> bool:
     if path.suffix in IGNORED_SUFFIXES:
         return True
     return any(part.endswith(".egg-info") for part in rel.parts)
+
+
+def _short_digest(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+
+
+def _truncate_text(text: str) -> tuple[str, bool]:
+    if len(text) <= TRACE_TEXT_LIMIT:
+        return text, False
+    return text[:TRACE_TEXT_LIMIT], True
 
 
 class MinimalReactControlAdapter(RunnerAdapter):
@@ -108,6 +122,22 @@ class MinimalReactControlAdapter(RunnerAdapter):
             i += 1
         return action, fields
 
+    def _action_signature(self, action: str | None, fields: dict[str, str]) -> str:
+        if action is None:
+            return "invalid_action"
+        if action in {"list_files", "read_file", "search"}:
+            value = fields.get("PATH", ".") if action != "search" else fields.get("QUERY", "")
+            return f"{action}:{value}"
+        if action in {"run_tests", "finish"}:
+            return action
+        if action == "replace_text":
+            return (
+                f"replace_text:{fields.get('PATH', '')}:{_short_digest(fields.get('OLD', ''))}:{_short_digest(fields.get('NEW', ''))}"
+            )
+        if action == "write_file":
+            return f"write_file:{fields.get('PATH', '')}:{_short_digest(fields.get('CONTENT', ''))}"
+        return f"{action}:{fields.get('PATH', '')}"
+
     def _finish_telem(self) -> None:
         if self._telem.tokens_input in (None, 0) and self._telem.tokens_output in (None, 0):
             self._telem.telemetry_completeness = "partial"
@@ -127,6 +157,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
         patch_attempts = 0
         invalid_actions = 0
         blocked_finish_attempts = 0
+        blocked_repeat_count = 0
         wrote_files = False
         last_write_step: int | None = None
         last_visible_test_step: int | None = None
@@ -135,26 +166,42 @@ class MinimalReactControlAdapter(RunnerAdapter):
         output_dir = Path(config["task_output_dir"])
         stdout_path = output_dir / "runner_stdout.txt"
         stderr_path = output_dir / "runner_stderr.txt"
+        trace_path = output_dir / "control_trace.jsonl"
         repo_root = (sandbox_dir / "repo").resolve()
         prompt_path = sandbox_dir / "prompt.txt"
         prompt_text = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
         started = now_iso()
+        start_monotonic = time.monotonic()
         cmd = "model_backed_minimal_react_control_loop"
         timed_out = False
         exit_code = 0
         runner_crashed = False
+        budget_exceeded = False
+        runner_notes: str | None = None
+        crash_reason: str | None = None
         client = self._client(config)
         model = str(config.get("model", ""))
         messages: list[ChatMessage] = [
             ChatMessage(
                 role="system",
                 content=(
-                    "You are minimal_react_control, a simple coding agent used as a benchmark control.\n"
-                    "You must solve the task by inspecting files, running visible tests, and making minimal edits.\n"
-                    "You only have access to the repository and visible tests.\n"
-                    "Do not assume hidden tests.\n"
-                    "Do not modify tests.\n"
-                    "Do not make broad rewrites.\n\n"
+                    "You are minimal_react_control, a simple benchmark control runner.\n\n"
+                    "Use this default workflow:\n"
+                    "1. List files once to understand the repo.\n"
+                    "2. Search for terms from the user task or failing test output.\n"
+                    "3. Read likely source files.\n"
+                    "4. Run visible tests to see the failure.\n"
+                    "5. Make the smallest source-code edit.\n"
+                    "6. Run visible tests again after every edit.\n"
+                    "7. Finish only after visible tests pass or you are unable to proceed.\n\n"
+                    "Rules:\n"
+                    "- Do not modify tests.\n"
+                    "- Do not assume hidden tests.\n"
+                    "- Do not repeatedly list the same directory.\n"
+                    "- Do not repeatedly read the same file unless something changed.\n"
+                    "- Prefer replace_text for small edits.\n"
+                    "- Use write_file only when replace_text is not practical.\n"
+                    "- If an action returns useful information, use it in the next action.\n\n"
                     "Respond with exactly one action in this format:\n"
                     "ACTION: list_files\nPATH: .\n\n"
                     "or\n\n"
@@ -178,17 +225,34 @@ class MinimalReactControlAdapter(RunnerAdapter):
             ),
         ]
 
-        with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
+        previous_signature = ""
+        repeated_action_count = 0
+
+        with (
+            stdout_path.open("w", encoding="utf-8") as out,
+            stderr_path.open("w", encoding="utf-8") as err,
+            trace_path.open("w", encoding="utf-8") as trace,
+        ):
             deadline = time.monotonic() + budget.wall_time_sec
             while True:
                 step += 1
                 if time.monotonic() >= deadline:
                     timed_out = True
                     exit_code = 124
+                    crash_reason = "wall time exceeded"
                     break
                 if (self._telem.model_calls or 0) >= budget.max_model_calls:
+                    runner_crashed = True
+                    exit_code = 1
+                    budget_exceeded = True
+                    crash_reason = "max model calls reached"
+                    runner_notes = append_note(runner_notes, "minimal_react_control reached max_model_calls before finishing.")
                     break
                 if patch_attempts >= budget.max_patch_attempts:
+                    runner_crashed = True
+                    exit_code = 1
+                    crash_reason = "patch attempts exceeded"
+                    runner_notes = append_note(runner_notes, "minimal_react_control reached max_patch_attempts before finishing.")
                     break
                 try:
                     response = client.create_chat_completion(
@@ -208,11 +272,34 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     err.write(f"Chat client error: {exc}\n")
                     runner_crashed = True
                     exit_code = 1
+                    crash_reason = "backend request failure"
+                    runner_notes = append_note(runner_notes, f"minimal_react_control backend request failed: {exc}")
                     break
 
                 action, fields = self._parse_action(response.content)
+                action_signature = self._action_signature(action, fields)
+                if action_signature == previous_signature:
+                    repeated_action_count += 1
+                else:
+                    previous_signature = action_signature
+                    repeated_action_count = 1
+
                 obs = ""
-                if action == "list_files":
+                action_valid = True
+                error: str | None = None
+                skip_execute_due_repeat = repeated_action_count >= 3 and action_signature in {
+                    "invalid_action",
+                    "run_tests",
+                } or (repeated_action_count >= 3 and action in {"list_files", "read_file", "search"})
+
+                if skip_execute_due_repeat:
+                    blocked_repeat_count += 1
+                    obs = (
+                        "You have already performed this action several times without progress. "
+                        "Choose a different action: search, read_file, run_tests, replace_text, write_file, or finish."
+                    )
+                    error = "blocked_repeat"
+                elif action == "list_files":
                     rel_path = fields.get("PATH", ".")
                     base = resolve_repo_path(repo_root, rel_path)
                     if base is None or not base.exists() or not base.is_dir():
@@ -304,6 +391,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             patch_attempts += 1
                             wrote_files = True
                             last_write_step = step
+                            previous_signature = ""
+                            repeated_action_count = 0
                             obs = "write_file ok"
                 elif action == "replace_text":
                     rel_path = fields.get("PATH", "")
@@ -343,6 +432,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                         patch_attempts += 1
                                         wrote_files = True
                                         last_write_step = step
+                                        previous_signature = ""
+                                        repeated_action_count = 0
                                         obs = "replace_text ok"
                 elif action == "finish":
                     if wrote_files and (last_visible_test_step is None or (last_write_step is not None and last_visible_test_step <= last_write_step)):
@@ -351,6 +442,11 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         if blocked_finish_attempts > 3:
                             runner_crashed = True
                             exit_code = 1
+                            crash_reason = "repeated blocked finish without verification"
+                            runner_notes = append_note(
+                                runner_notes,
+                                "minimal_react_control stopped after repeated blocked finish attempts without visible verification.",
+                            )
                             err.write(
                                 "finish blocked repeatedly after writes without visible verification; stopping after more than 3 attempts.\n"
                             )
@@ -361,19 +457,66 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         obs = f"finish: {fields.get('REASON', '')}"
                         messages.append(ChatMessage(role="assistant", content=response.content))
                         messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
-                        break
                 else:
                     invalid_actions += 1
+                    action_valid = False
+                    error = "parse_error"
                     obs = "Invalid action. Use ACTION with one of list_files/read_file/search/run_tests/write_file/replace_text/finish."
                     if invalid_actions > 3:
                         runner_crashed = True
                         exit_code = 1
+                        crash_reason = "too many invalid actions"
+                        runner_notes = append_note(runner_notes, "minimal_react_control stopped after too many invalid actions.")
                         messages.append(ChatMessage(role="assistant", content=response.content))
                         messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
                         break
 
+                if repeated_action_count == 2 and not skip_execute_due_repeat:
+                    obs = (
+                        f"{obs}\nYou repeated the same action. "
+                        "Use the result and choose a different next action."
+                    )
+                if blocked_repeat_count > 3:
+                    runner_crashed = True
+                    exit_code = 1
+                    crash_reason = "repeated identical actions"
+                    runner_notes = append_note(
+                        runner_notes,
+                        "minimal_react_control stopped after repeated identical actions without progress.",
+                    )
+
+                model_output, model_trunc = _truncate_text(response.content)
+                tool_result, tool_trunc = _truncate_text(obs)
+                trace.write(
+                    json.dumps(
+                        {
+                            "step": step,
+                            "elapsed_sec": round(time.monotonic() - start_monotonic, 4),
+                            "model_output": model_output,
+                            "model_output_truncated": model_trunc,
+                            "parsed_action": action,
+                            "parsed_args": fields,
+                            "valid_action": action_valid,
+                            "tool_result": tool_result,
+                            "tool_result_truncated": tool_trunc,
+                            "error": error,
+                            "repeated_action_count": repeated_action_count,
+                        }
+                    )
+                    + "\n"
+                )
+                trace.flush()
+
+                if runner_crashed:
+                    break
+                if action == "finish" and obs.startswith("finish:"):
+                    break
+
                 messages.append(ChatMessage(role="assistant", content=response.content))
                 messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+            trace.write(json.dumps({"event": "final", "status": "runner_crash" if runner_crashed else "ok", "reason": crash_reason}) + "\n")
+            trace.flush()
+
         ended = now_iso()
         self._finish_telem()
         return AdapterRunResult(
@@ -388,6 +531,9 @@ class MinimalReactControlAdapter(RunnerAdapter):
             comparison_mode="strict",
             control_kind="model_backed",
             setting_warnings=[],
+            notes=runner_notes,
+            trace_path=trace_path,
+            budget_exceeded=budget_exceeded,
         )
 
     def collect_telemetry(self, sandbox_dir: Path) -> Telemetry:

@@ -20,6 +20,9 @@ class AdapterRunResult:
     comparison_mode: str
     control_kind: str | None = None
     setting_warnings: list[str] = field(default_factory=list)
+    notes: str | None = None
+    trace_path: Path | None = None
+    budget_exceeded: bool = False
 
 
 class RunnerAdapter:

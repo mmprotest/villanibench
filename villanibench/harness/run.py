@@ -138,7 +138,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.setting_warnings = run_res.setting_warnings
             result.runner_crashed = run_res.runner_crashed
             result.timed_out = run_res.timed_out
+            result.budget_exceeded = run_res.budget_exceeded
             result.control_kind = run_res.control_kind
+            if run_res.notes:
+                result.notes = append_note(result.notes, run_res.notes)
+            if run_res.trace_path:
+                result.notes = append_note(result.notes, f"control_trace={run_res.trace_path.name}")
 
             after = snapshot_files(sandbox)
             diff_stats = analyze_diff(before, after, task.task_dir, task_output / "final.diff")

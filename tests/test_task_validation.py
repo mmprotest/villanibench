@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from villanibench.tasks.validation import validate_suite_dir, validate_task_dir
+import pytest
+
+from villanibench.cli import main
+from villanibench.tasks.validation import validate_suite_behavior, validate_suite_dir, validate_task_dir
 
 
 def test_task_validation_ok():
@@ -108,3 +111,114 @@ def test_validation_fails_when_prompt_mentions_hidden_tests(tmp_path: Path):
     task_dir = _write_min_task(tmp_path, prompt="please pass hidden tests too")
     errors = validate_task_dir(task_dir)
     assert "prompt.txt must not mention hidden tests" in errors
+
+
+def _write_behavior_suite(tmp_path: Path, *, visible_passes: bool = False, hidden_passes: bool = False, hang: bool = False) -> Path:
+    suite_dir = tmp_path / "suite"
+    task_dir = suite_dir / "tasks" / "VB-T-001"
+    (task_dir / "repo/src").mkdir(parents=True)
+    (task_dir / "tests/visible").mkdir(parents=True)
+    (task_dir / "tests/hidden").mkdir(parents=True)
+    (task_dir / "oracle").mkdir(parents=True)
+    (task_dir / "repo/src/app.py").write_text("def x():\n    return 1\n", encoding="utf-8")
+    (task_dir / "prompt.txt").write_text("fix bug", encoding="utf-8")
+    (task_dir / "task.yaml").write_text(
+        "\n".join(
+            [
+                "id: VB-T-001",
+                "title: t",
+                "category: minimal_patch",
+                "difficulty: easy",
+                "language: python",
+                "framework: pytest",
+                "prompt_file: prompt.txt",
+                "repo_dir: repo",
+                "visible_test_command: pytest -q tests/visible",
+                "hidden_test_command: pytest -q tests/hidden",
+                "budget_profile: lite_v0_1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (task_dir / "oracle/expected_files.json").write_text('{"expected_files":["src/app.py"],"strongly_expected_files":[]}', encoding="utf-8")
+    (task_dir / "oracle/allowed_files.json").write_text(
+        '{"allowed_code_files":["src/app.py"],"forbidden_patterns":["tests/"]}',
+        encoding="utf-8",
+    )
+    (task_dir / "oracle/failure_modes.json").write_text("{}", encoding="utf-8")
+    if hang:
+        body = "import time\n\ndef test_hang():\n    time.sleep(60)\n"
+        (task_dir / "tests/visible/test_visible.py").write_text(body, encoding="utf-8")
+        (task_dir / "tests/hidden/test_hidden.py").write_text(body, encoding="utf-8")
+    else:
+        (task_dir / "tests/visible/test_visible.py").write_text(
+            f"def test_visible():\n    assert {str(visible_passes)}\n",
+            encoding="utf-8",
+        )
+        (task_dir / "tests/hidden/test_hidden.py").write_text(
+            f"def test_hidden():\n    assert {str(hidden_passes)}\n",
+            encoding="utf-8",
+        )
+    (suite_dir / "suite.yaml").write_text(
+        "\n".join(
+            [
+                "id: x",
+                "name: x",
+                "version: 0.1",
+                "description: x",
+                "task_count: 1",
+                "categories:",
+                "  - minimal_patch",
+                "budget_profile: lite_v0_1",
+                "visibility: private",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return suite_dir
+
+
+def test_behavior_validation_passes_when_visible_and_hidden_fail(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=False, hidden_passes=False)
+    ok, rows = validate_suite_behavior(suite, timeout_sec=5)
+    assert ok is True
+    assert rows[0]["visible_pre_fails"] is True
+    assert rows[0]["hidden_pre_fails"] is True
+
+
+def test_behavior_validation_fails_when_hidden_passes(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=False, hidden_passes=True)
+    ok, rows = validate_suite_behavior(suite, timeout_sec=5)
+    assert ok is False
+    assert rows[0]["hidden_pre_fails"] is False
+
+
+def test_behavior_validation_fails_when_visible_passes(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=True, hidden_passes=False)
+    ok, rows = validate_suite_behavior(suite, timeout_sec=5)
+    assert ok is False
+    assert rows[0]["visible_pre_fails"] is False
+
+
+def test_behavior_validation_fails_fast_on_timeout(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, hang=True)
+    ok, rows = validate_suite_behavior(suite, timeout_sec=1)
+    assert ok is False
+    assert rows[0]["visible_timed_out"] is True
+
+
+def test_validate_behavior_cli_exits_non_zero_on_failure(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=True, hidden_passes=False)
+    with pytest.raises(SystemExit) as exc:
+        main(["validate-behavior", str(suite)])
+    assert exc.value.code == 1
+
+
+def test_core_suite_behavior_validation_smoke():
+    ok, rows = validate_suite_behavior(Path("suites/core_v0_1"), timeout_sec=20)
+    assert ok is True
+    assert all(r["visible_pre_fails"] for r in rows)
+    assert all(r["hidden_pre_fails"] for r in rows)
+    assert not any(r["visible_timed_out"] or r["hidden_timed_out"] for r in rows)

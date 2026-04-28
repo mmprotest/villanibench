@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 from .loader import load_suite, load_task
@@ -46,6 +50,7 @@ DIRTY_PATH_PARTS = {
     "build",
 }
 DIRTY_SUFFIXES = {".pyc", ".pyo", ".pyd"}
+BEHAVIOR_TIMEOUT_SEC = 20
 
 
 def _is_safe_repo_rel_path(path_str: str) -> bool:
@@ -160,3 +165,43 @@ def validate_suite_dir(suite_dir: Path) -> list[str]:
         if task.category not in suite_categories:
             errors.append(f"Task category not in suite categories: {task.id}:{task.category}")
     return errors
+
+
+def _run_command(command: str, cwd: Path, timeout_sec: int) -> tuple[int, bool]:
+    try:
+        proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True, timeout=timeout_sec)
+        return proc.returncode, False
+    except subprocess.TimeoutExpired:
+        return 124, True
+
+
+def validate_suite_behavior(suite_dir: Path, timeout_sec: int = BEHAVIOR_TIMEOUT_SEC) -> tuple[bool, list[dict]]:
+    _, tasks = load_suite(suite_dir)
+    rows: list[dict] = []
+    all_ok = True
+    for task in tasks:
+        with tempfile.TemporaryDirectory(prefix=f"vb_behavior_{task.id}_") as temp_dir:
+            sandbox = Path(temp_dir)
+            shutil.copytree(task.task_dir / "repo", sandbox / "repo")
+            shutil.copytree(task.task_dir / "tests" / "visible", sandbox / "tests" / "visible")
+            start = time.monotonic()
+            vis_code, vis_timeout = _run_command(task.visible_test_command, sandbox, timeout_sec)
+            shutil.copytree(task.task_dir / "tests" / "hidden", sandbox / "tests" / "hidden")
+            hid_code, hid_timeout = _run_command(task.hidden_test_command, sandbox, timeout_sec)
+            elapsed = round(time.monotonic() - start, 3)
+            visible_pre_fails = vis_code != 0 and not vis_timeout
+            hidden_pre_fails = hid_code != 0 and not hid_timeout
+            ok = visible_pre_fails and hidden_pre_fails and not vis_timeout and not hid_timeout
+            all_ok = all_ok and ok
+            rows.append(
+                {
+                    "task_id": task.id,
+                    "ok": ok,
+                    "visible_pre_fails": visible_pre_fails,
+                    "hidden_pre_fails": hidden_pre_fails,
+                    "visible_timed_out": vis_timeout,
+                    "hidden_timed_out": hid_timeout,
+                    "elapsed_sec": elapsed,
+                }
+            )
+    return all_ok, rows
