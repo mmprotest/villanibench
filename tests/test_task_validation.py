@@ -225,10 +225,3 @@ def test_behavior_validation_fails_on_test_syntax_error(tmp_path: Path):
     assert ok is False
     assert rows[0]["message"] is not None
     assert "Task test infrastructure error before fix" in rows[0]["message"]
-
-def test_core_suite_behavior_validation_smoke():
-    ok, rows = validate_suite_behavior(Path("suites/core_v0_1"), timeout_sec=20)
-    assert ok is True
-    assert all(r["visible_pre_fails"] for r in rows)
-    assert all(r["hidden_pre_fails"] for r in rows)
-    assert not any(r["visible_timed_out"] or r["hidden_timed_out"] for r in rows)

@@ -94,6 +94,8 @@ def main(argv: list[str] | None = None) -> None:
                     issues.append("visible test command timed out")
                 if row["hidden_timed_out"]:
                     issues.append("hidden test command timed out")
+                if row.get("message"):
+                    issues.append(str(row["message"]))
                 print(f"{row['task_id']}: FAIL {'; '.join(issues)}")
         report_dir = Path("artifacts/validation")
         report_dir.mkdir(parents=True, exist_ok=True)

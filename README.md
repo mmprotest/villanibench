@@ -51,7 +51,7 @@ villanibench run \
   --model qwen3.6-9b \
   --base-url http://127.0.0.1:1234 \
   --api-key dummy \
-  --villani-command-template "villani-code run --repo {cwd} --provider openai --model {model} --base-url {base_url} --api-key {api_key} --auto-approve --auto-accept-edits --dangerously-skip-permissions --plan-mode off --no-stream "{prompt_text}"" \
+  --villani-command-template 'villani-code run --repo "{cwd}" --provider openai --model "{model}" --base-url "{base_url}" --api-key "{api_key}" --auto-approve --auto-accept-edits --dangerously-skip-permissions --plan-mode off --no-stream --debug trace --debug-dir "{output_dir}/villani_debug" "{prompt_text}"' \
   --output-dir artifacts/runs/villani_qwen9b
 ```
 
@@ -70,11 +70,14 @@ villanibench compare \
 
 ## Limitations (v0.1 scaffold)
 
-- The core v0.1 suite currently includes 10 tasks total:
+- The core v0.1 suite currently includes 30 tasks total:
   - 5 `minimal_patch` tasks
   - 5 `localisation` tasks
+  - 5 `verification` tasks
+  - 5 `state_coherence` tasks
+  - 5 `tool_efficiency` tasks
+  - 5 `recovery` tasks
 - This is still too small for strong public benchmark claims; treat results as development diagnostics.
-- Next planned categories are `verification`, `state_coherence`, `tool_efficiency`, and `recovery`.
 
 - Telemetry can be partial depending on backend usage fields.
 - No leaderboard, no Docker, no charts, no web service.
@@ -85,5 +88,7 @@ VillaniBench is maintained by creators of Villani Code and should be scrutinized
 Notes for external CLI adapters:
 - VillaniBench sets subprocess cwd to the sandbox repo (`sandbox/repo`).
 - Villani Code should be passed `--repo "{cwd}"` (Villani supports `--repo`).
-- Use `{prompt_text}` for positional instruction CLIs; do not assume `--prompt-file` support.
+- `{prompt_text}` is the positional instruction text.
+- Do not use `--prompt-file` for Villani Code in this template.
+- Do not use unsupported `--cwd`; pass `--repo "{cwd}"` instead.
 - VillaniBench sets `PYTHONIOENCODING=utf-8` and `PYTHONUTF8=1` for external runner subprocesses to avoid Windows Unicode console crashes.
