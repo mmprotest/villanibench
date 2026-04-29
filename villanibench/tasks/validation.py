@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+from villanibench.harness.process import run_command_tree
 
 from .loader import load_suite, load_task
 from .schema import ALLOWED_CATEGORIES, ALLOWED_DIFFICULTIES
@@ -168,13 +169,8 @@ def validate_suite_dir(suite_dir: Path) -> list[str]:
 
 
 def _run_command(command: str, cwd: Path, timeout_sec: int) -> tuple[int, bool, str, str]:
-    try:
-        proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True, timeout=timeout_sec)
-        return proc.returncode, False, proc.stdout or "", proc.stderr or ""
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ((exc.stdout or b"").decode(errors="replace"))
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ((exc.stderr or b"").decode(errors="replace"))
-        return 124, True, stdout, stderr
+    proc = run_command_tree(command, cwd, float(timeout_sec))
+    return proc.exit_code, proc.timed_out, proc.stdout, proc.stderr
 
 
 INFRASTRUCTURE_ERROR_PATTERNS = (

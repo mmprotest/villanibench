@@ -554,14 +554,15 @@ def test_parse_action_preserves_replace_text_blocks_with_preamble():
     assert fields["NEW"] == "DEFAULT_RETRIES = 3"
 
 
-def test_parse_action_invalid_replace_text_delimiter_is_rejected():
+def test_parse_action_replace_text_without_end_markers_parses():
     adapter = MinimalReactControlAdapter(chat_client=ScriptedChatClient(["ACTION: finish\nREASON: done"]))
     action, fields, error = adapter._parse_action(
         "ACTION: replace_text\nPATH: src/demo_cli/config.py\nOLD:\nDEFAULT_RETRIES = 5\nNEW:\nDEFAULT_RETRIES = 3\nEND_NEW"
     )
-    assert action is None
-    assert fields == {}
-    assert error == "missing_end_old"
+    assert error is None
+    assert action == "replace_text"
+    assert fields["OLD"] == "DEFAULT_RETRIES = 5"
+    assert fields["NEW"] == "DEFAULT_RETRIES = 3"
 
 
 def test_action_with_preamble_is_valid_in_trace(tmp_path: Path):

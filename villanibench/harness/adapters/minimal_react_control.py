@@ -126,11 +126,13 @@ class MinimalReactControlAdapter(RunnerAdapter):
             elif re.match(r"^\s*OLD\s*:\s*$", line):
                 i += 1
                 old_lines: list[str] = []
-                while i < len(lines) and lines[i].strip() != "END_OLD":
+                while i < len(lines) and lines[i].strip() != "END_OLD" and not re.match(r"^\s*NEW\s*:\s*$", lines[i]):
                     old_lines.append(lines[i])
                     i += 1
                 if i >= len(lines):
                     return None, {}, "missing_end_old"
+                if re.match(r"^\s*NEW\s*:\s*$", lines[i]):
+                    i -= 1
                 fields["OLD"] = "\n".join(old_lines)
             elif re.match(r"^\s*NEW\s*:\s*$", line):
                 i += 1
@@ -433,8 +435,15 @@ class MinimalReactControlAdapter(RunnerAdapter):
                         ):
                             obs = "Invalid write_file action or write budget reached."
                         else:
+                            content = fields.get("CONTENT")
+                            if content is None:
+                                obs = "write_file requires CONTENT and END_CONTENT. No file was modified."
+                                continue
+                            if not content.strip():
+                                obs = "write_file CONTENT must be non-empty for benchmark safety."
+                                continue
                             file_path.parent.mkdir(parents=True, exist_ok=True)
-                            file_path.write_text(fields.get("CONTENT", ""), encoding="utf-8")
+                            file_path.write_text(content, encoding="utf-8")
                             self._telem.file_writes = (self._telem.file_writes or 0) + 1
                             patch_attempts += 1
                             wrote_files = True
@@ -469,6 +478,12 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                 else:
                                     old = fields.get("OLD", "")
                                     new = fields.get("NEW", "")
+                                    if not old.strip():
+                                        obs = "OLD text must be non-empty."
+                                        continue
+                                    if not new.strip():
+                                        obs = "NEW text must be non-empty."
+                                        continue
                                     count = current.count(old)
                                     if count == 0:
                                         obs = "OLD text not found."

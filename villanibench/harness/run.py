@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 import uuid
 from dataclasses import dataclass
@@ -11,6 +10,7 @@ from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.notes import append_note
+from villanibench.harness.process import run_command_tree
 from villanibench.harness.result_schema import TaskResult
 from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
 from villanibench.tasks.loader import load_suite
@@ -33,30 +33,8 @@ def resolve_test_command_timeout_sec(budget_wall_time_sec: float, remaining_wall
 
 
 def run_cmd(command: str, cwd: Path, timeout_sec: float) -> CommandResult:
-    started = time.monotonic()
-    try:
-        proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True, timeout=timeout_sec)
-        elapsed = time.monotonic() - started
-        return CommandResult(
-            exit_code=proc.returncode,
-            stdout=proc.stdout,
-            stderr=proc.stderr,
-            timed_out=False,
-            wall_time_sec=elapsed,
-        )
-    except subprocess.TimeoutExpired as exc:
-        elapsed = time.monotonic() - started
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ((exc.stdout or b"").decode(errors="replace"))
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ((exc.stderr or b"").decode(errors="replace"))
-        timeout_message = f"Command timed out after {timeout_sec:.1f}s"
-        stderr = f"{stderr.rstrip()}\n{timeout_message}".strip()
-        return CommandResult(
-            exit_code=124,
-            stdout=stdout,
-            stderr=stderr,
-            timed_out=True,
-            wall_time_sec=elapsed,
-        )
+    proc = run_command_tree(command, cwd, timeout_sec)
+    return CommandResult(proc.exit_code, proc.stdout, proc.stderr, proc.timed_out, proc.wall_time_sec)
 
 
 def classify_status(result: TaskResult) -> str:

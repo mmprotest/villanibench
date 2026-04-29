@@ -5,8 +5,22 @@ from villanibench.harness.adapters.external_cli import ExternalCliAdapter
 from villanibench.harness.run import run_cmd, run_suite
 
 
-SUITE_DIR = Path("suites/core_v0_1")
 
+
+
+def _single_task_suite(tmp_path: Path) -> Path:
+    suite_dir = tmp_path / "suite"
+    task_src = Path("suites/core_v0_1/tasks/VB-MIN-001")
+    task_dst = suite_dir / "tasks" / "VB-MIN-001"
+    import shutil
+    shutil.copytree(task_src, task_dst)
+    (suite_dir / "suite.yaml").write_text(
+        "\n".join([
+            "id: core-fixture", "name: core fixture", "version: 0.1", "description: fixture",
+            "task_count: 1", "categories:", "  - minimal_patch", "budget_profile: lite_v0_1", "visibility: mixed",
+        ]) + "\n", encoding="utf-8"
+    )
+    return suite_dir
 
 def test_hidden_tests_are_isolated_until_post_runner(tmp_path: Path, monkeypatch):
     adapter = ExternalCliAdapter(
@@ -16,7 +30,7 @@ def test_hidden_tests_are_isolated_until_post_runner(tmp_path: Path, monkeypatch
     monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
 
     out = tmp_path / "run"
-    run_suite(SUITE_DIR, "fake_external", "dummy", out, {})
+    run_suite(_single_task_suite(tmp_path), "fake_external", "dummy", out, {})
 
     task_dir = out / "tasks" / "VB-MIN-001"
     result = json.loads((task_dir / "result.json").read_text(encoding="utf-8"))
@@ -32,7 +46,7 @@ def test_external_fake_runner_end_to_end_fixes_task(tmp_path: Path, monkeypatch)
     monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
 
     out = tmp_path / "run"
-    run_suite(SUITE_DIR, "fake_external", "dummy", out, {})
+    run_suite(_single_task_suite(tmp_path), "fake_external", "dummy", out, {})
 
     task_dir = out / "tasks" / "VB-MIN-001"
     result = json.loads((task_dir / "result.json").read_text(encoding="utf-8"))
@@ -58,7 +72,7 @@ def test_runner_created_hidden_tests_is_forbidden_modification(tmp_path: Path, m
     monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
 
     out = tmp_path / "run"
-    run_suite(SUITE_DIR, "fake_external", "dummy", out, {})
+    run_suite(_single_task_suite(tmp_path), "fake_external", "dummy", out, {})
     result = json.loads((out / "tasks" / "VB-MIN-001/result.json").read_text(encoding='utf-8'))
     assert result["status"] == "forbidden_modification"
     assert "Runner created tests/hidden before evaluator copied hidden tests." in result["notes"]

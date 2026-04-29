@@ -61,11 +61,16 @@ def test_external_cli_sets_utf8_env(tmp_path: Path, monkeypatch):
     out.mkdir()
     seen = {}
 
-    def _fake_run(*args, **kwargs):
-        seen["env"] = kwargs.get("env", {})
-        return subprocess.CompletedProcess(args[0], 0)
+    def _fake_run_command_tree(command, cwd, timeout_sec, env=None):
+        seen["env"] = env or {}
+        class R:
+            exit_code = 0
+            stdout = ""
+            stderr = ""
+            timed_out = False
+        return R()
 
-    monkeypatch.setattr("villanibench.harness.adapters.external_cli.subprocess.run", _fake_run)
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.run_command_tree", _fake_run_command_tree)
     adapter = ExternalCliAdapter("fake", "echo hi")
     res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {"task_output_dir": str(out), "model": "m"})
     assert res.exit_code == 0

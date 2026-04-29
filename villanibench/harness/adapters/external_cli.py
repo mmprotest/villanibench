@@ -4,6 +4,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from villanibench.harness.process import run_command_tree
+
 from .base import AdapterRunResult, RunnerAdapter, now_iso
 
 
@@ -49,8 +51,8 @@ class ExternalCliAdapter(RunnerAdapter):
             visible_test_command=str(task.visible_test_command),
         )
         env = os.environ.copy()
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        env.setdefault("PYTHONUTF8", "1")
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
 
         started = now_iso()
         timed_out = False
@@ -58,22 +60,12 @@ class ExternalCliAdapter(RunnerAdapter):
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
-                completed = subprocess.run(
-                    command,
-                    cwd=cwd,
-                    shell=True,
-                    stdout=out,
-                    stderr=err,
-                    timeout=budget.wall_time_sec,
-                    text=True,
-                    env=env,
-                )
-                exit_code = completed.returncode
-                runner_crashed = completed.returncode != 0
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                runner_crashed = False
-                exit_code = 124
+                completed = run_command_tree(command, cwd, budget.wall_time_sec, env=env)
+                out.write(completed.stdout)
+                err.write(completed.stderr)
+                timed_out = completed.timed_out
+                exit_code = completed.exit_code
+                runner_crashed = completed.exit_code != 0 and not completed.timed_out
             except Exception as exc:
                 err.write(f"Adapter execution error: {exc}\n")
                 runner_crashed = True
