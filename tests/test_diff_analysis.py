@@ -102,3 +102,29 @@ def test_diff_analysis_marks_decoy_and_expected_files(tmp_path: Path):
     stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
     assert stats.expected_file_touched is True
     assert stats.decoy_file_touched is True
+
+
+def test_diff_analysis_ignores_villani_runtime_dirs(tmp_path: Path):
+    root = tmp_path / "sandbox"
+    (root / "repo/src").mkdir(parents=True)
+    (root / "repo/.villani").mkdir(parents=True)
+    (root / "repo/.villani_code/missions/x").mkdir(parents=True)
+    (root / "tests/visible").mkdir(parents=True)
+    src = root / "repo/src/app.py"
+    src.write_text("x=1\n", encoding="utf-8")
+    villani_state = root / "repo/.villani/context_state.json"
+    villani_state.write_text("{}\n", encoding="utf-8")
+    villani_transcript = root / "repo/.villani_code/missions/x/transcript.jsonl"
+    villani_transcript.write_text("{}\n", encoding="utf-8")
+    task_dir = _mk_task_dir(tmp_path)
+
+    before = snapshot_files(root)
+    src.write_text("x=2\n", encoding="utf-8")
+    villani_state.write_text('{"a":1}\n', encoding="utf-8")
+    villani_transcript.write_text('{"b":2}\n', encoding="utf-8")
+    stats = analyze_diff(before, snapshot_files(root), task_dir, tmp_path / "final.diff")
+
+    assert "repo/src/app.py" in stats.files_touched
+    assert not any(".villani" in p for p in stats.files_touched)
+    assert ".villani" not in stats.unified_diff
+    assert stats.patch_size_lines == 2

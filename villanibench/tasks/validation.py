@@ -167,13 +167,30 @@ def validate_suite_dir(suite_dir: Path) -> list[str]:
     return errors
 
 
-def _run_command(command: str, cwd: Path, timeout_sec: int) -> tuple[int, bool]:
+def _run_command(command: str, cwd: Path, timeout_sec: int) -> tuple[int, bool, str, str]:
     try:
         proc = subprocess.run(command, cwd=cwd, shell=True, text=True, capture_output=True, timeout=timeout_sec)
-        return proc.returncode, False
-    except subprocess.TimeoutExpired:
-        return 124, True
+        return proc.returncode, False, proc.stdout or "", proc.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ((exc.stdout or b"").decode(errors="replace"))
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ((exc.stderr or b"").decode(errors="replace"))
+        return 124, True, stdout, stderr
 
+
+INFRASTRUCTURE_ERROR_PATTERNS = (
+    "SyntaxError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "ERROR collecting",
+    "collected 0 items",
+    "no tests ran",
+)
+
+def _infrastructure_error(output: str) -> str | None:
+    for pattern in INFRASTRUCTURE_ERROR_PATTERNS:
+        if pattern in output:
+            return pattern
+    return None
 
 def validate_suite_behavior(suite_dir: Path, timeout_sec: int = BEHAVIOR_TIMEOUT_SEC) -> tuple[bool, list[dict]]:
     _, tasks = load_suite(suite_dir)
@@ -185,14 +202,20 @@ def validate_suite_behavior(suite_dir: Path, timeout_sec: int = BEHAVIOR_TIMEOUT
             shutil.copytree(task.task_dir / "repo", sandbox / "repo")
             shutil.copytree(task.task_dir / "tests" / "visible", sandbox / "tests" / "visible")
             start = time.monotonic()
-            vis_code, vis_timeout = _run_command(task.visible_test_command, sandbox, timeout_sec)
+            vis_code, vis_timeout, vis_stdout, vis_stderr = _run_command(task.visible_test_command, sandbox, timeout_sec)
             shutil.copytree(task.task_dir / "tests" / "hidden", sandbox / "tests" / "hidden")
-            hid_code, hid_timeout = _run_command(task.hidden_test_command, sandbox, timeout_sec)
+            hid_code, hid_timeout, hid_stdout, hid_stderr = _run_command(task.hidden_test_command, sandbox, timeout_sec)
             elapsed = round(time.monotonic() - start, 3)
-            visible_pre_fails = vis_code != 0 and not vis_timeout
-            hidden_pre_fails = hid_code != 0 and not hid_timeout
-            ok = visible_pre_fails and hidden_pre_fails and not vis_timeout and not hid_timeout
+            vis_infra = _infrastructure_error(vis_stdout + "\n" + vis_stderr) if not vis_timeout else None
+            hid_infra = _infrastructure_error(hid_stdout + "\n" + hid_stderr) if not hid_timeout else None
+            visible_pre_fails = vis_code != 0 and not vis_timeout and vis_infra is None
+            hidden_pre_fails = hid_code != 0 and not hid_timeout and hid_infra is None
+            infra_summary = vis_infra or hid_infra
+            ok = visible_pre_fails and hidden_pre_fails and not vis_timeout and not hid_timeout and infra_summary is None
             all_ok = all_ok and ok
+            message = None
+            if infra_summary:
+                message = f"Task test infrastructure error before fix: {infra_summary}"
             rows.append(
                 {
                     "task_id": task.id,
@@ -201,6 +224,7 @@ def validate_suite_behavior(suite_dir: Path, timeout_sec: int = BEHAVIOR_TIMEOUT
                     "hidden_pre_fails": hidden_pre_fails,
                     "visible_timed_out": vis_timeout,
                     "hidden_timed_out": hid_timeout,
+                    "message": message,
                     "elapsed_sec": elapsed,
                 }
             )

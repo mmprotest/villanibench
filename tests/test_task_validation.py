@@ -216,6 +216,16 @@ def test_validate_behavior_cli_exits_non_zero_on_failure(tmp_path: Path):
     assert exc.value.code == 1
 
 
+
+def test_behavior_validation_fails_on_test_syntax_error(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=False, hidden_passes=False)
+    visible_test = suite / "tasks" / "VB-T-001" / "tests" / "visible" / "test_visible.py"
+    visible_test.write_text("def test_visible()\n    assert False\n", encoding="utf-8")
+    ok, rows = validate_suite_behavior(suite, timeout_sec=5)
+    assert ok is False
+    assert rows[0]["message"] is not None
+    assert "Task test infrastructure error before fix" in rows[0]["message"]
+
 def test_core_suite_behavior_validation_smoke():
     ok, rows = validate_suite_behavior(Path("suites/core_v0_1"), timeout_sec=20)
     assert ok is True

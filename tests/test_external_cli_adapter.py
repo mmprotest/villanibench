@@ -1,3 +1,5 @@
+import subprocess
+
 from pathlib import Path
 
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
@@ -49,3 +51,36 @@ def test_timeout_reported(tmp_path: Path):
     object.__setattr__(b, "wall_time_sec", 1)
     res = adapter.run(T(), sandbox, b, {"task_output_dir": str(out), "model": "m"})
     assert res.timed_out is True
+
+
+def test_external_cli_sets_utf8_env(tmp_path: Path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    (sandbox / "repo").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("x", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    seen = {}
+
+    def _fake_run(*args, **kwargs):
+        seen["env"] = kwargs.get("env", {})
+        return subprocess.CompletedProcess(args[0], 0)
+
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.subprocess.run", _fake_run)
+    adapter = ExternalCliAdapter("fake", "echo hi")
+    res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {"task_output_dir": str(out), "model": "m"})
+    assert res.exit_code == 0
+    assert seen["env"].get("PYTHONIOENCODING") == "utf-8"
+    assert seen["env"].get("PYTHONUTF8") == "1"
+
+
+def test_external_cli_usage_error_adds_note(tmp_path: Path):
+    sandbox = tmp_path / "sandbox"
+    (sandbox / "repo").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("x", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    adapter = ExternalCliAdapter("fake", 'python -c "import sys; print(\'No such option: --prompt-file\', file=sys.stderr); sys.exit(2)"')
+    res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {"task_output_dir": str(out), "model": "m"})
+    assert res.runner_crashed is True
+    assert res.notes is not None
+    assert "External runner command appears invalid" in res.notes

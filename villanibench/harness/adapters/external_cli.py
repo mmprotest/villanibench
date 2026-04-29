@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -47,6 +48,10 @@ class ExternalCliAdapter(RunnerAdapter):
             output_dir=str(output_dir.resolve()),
             visible_test_command=str(task.visible_test_command),
         )
+        env = os.environ.copy()
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        env.setdefault("PYTHONUTF8", "1")
+
         started = now_iso()
         timed_out = False
         runner_crashed = False
@@ -61,6 +66,7 @@ class ExternalCliAdapter(RunnerAdapter):
                     stderr=err,
                     timeout=budget.wall_time_sec,
                     text=True,
+                    env=env,
                 )
                 exit_code = completed.returncode
                 runner_crashed = completed.returncode != 0
@@ -72,6 +78,21 @@ class ExternalCliAdapter(RunnerAdapter):
                 err.write(f"Adapter execution error: {exc}\n")
                 runner_crashed = True
                 exit_code = 1
+        cli_error_patterns = (
+            "No such option",
+            "unrecognized arguments",
+            "Usage:",
+            "Missing argument",
+            "Got unexpected extra argument",
+        )
+        notes = None
+        if runner_crashed and stderr_path.exists():
+            stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
+            for pattern in cli_error_patterns:
+                if pattern in stderr_text:
+                    notes = f"External runner command appears invalid: {pattern}"
+                    break
+
         ended = now_iso()
         return AdapterRunResult(
             exit_code=exit_code,
@@ -85,4 +106,5 @@ class ExternalCliAdapter(RunnerAdapter):
             comparison_mode=comparison_mode,
             control_kind=None,
             setting_warnings=warnings,
+            notes=notes,
         )
