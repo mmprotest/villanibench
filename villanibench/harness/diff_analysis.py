@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-IGNORE_PARTS = {"__pycache__", ".pytest_cache", ".git", "build", "dist", ".venv", "venv", "node_modules"}
+IGNORE_PARTS = {"__pycache__", ".pytest_cache", ".git", "build", "dist", ".venv", "venv", "node_modules", ".villani", ".villani_code"}
 IGNORE_SUFFIXES = {".pyc"}
 IGNORE_PATTERNS = {"*.egg-info", ".coverage", ".coverage.*", "coverage.xml"}
 MAX_TEXT_SNAPSHOT_BYTES = 512_000

@@ -13,6 +13,8 @@ DEFAULT_TEMPLATE = (
     '--auto-approve '
     '--auto-accept-edits '
     '--dangerously-skip-permissions '
+    '--plan-mode off '
+    '--no-stream '
     '--debug trace '
     '--debug-dir "{output_dir}/villani_debug" '
     '"{prompt_text}"'

@@ -51,7 +51,7 @@ villanibench run \
   --model qwen3.6-9b \
   --base-url http://127.0.0.1:1234 \
   --api-key dummy \
-  --villani-command-template "villani-code run --prompt-file {prompt_file} --cwd {cwd} --model {model} --base-url {base_url} --api-key {api_key}" \
+  --villani-command-template "villani-code run --repo {cwd} --provider openai --model {model} --base-url {base_url} --api-key {api_key} --auto-approve --auto-accept-edits --dangerously-skip-permissions --plan-mode off --no-stream "{prompt_text}"" \
   --output-dir artifacts/runs/villani_qwen9b
 ```
 
@@ -80,3 +80,10 @@ villanibench compare \
 - No leaderboard, no Docker, no charts, no web service.
 
 VillaniBench is maintained by creators of Villani Code and should be scrutinized.
+
+
+Notes for external CLI adapters:
+- VillaniBench sets subprocess cwd to the sandbox repo (`sandbox/repo`).
+- Villani Code should be passed `--repo "{cwd}"` (Villani supports `--repo`).
+- Use `{prompt_text}` for positional instruction CLIs; do not assume `--prompt-file` support.
+- VillaniBench sets `PYTHONIOENCODING=utf-8` and `PYTHONUTF8=1` for external runner subprocesses to avoid Windows Unicode console crashes.

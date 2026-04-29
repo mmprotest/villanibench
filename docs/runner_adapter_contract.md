@@ -15,6 +15,7 @@ Adapters should execute with cwd set to `sandbox/repo`.
 
 Adapter command templates should only require:
 - `prompt_file`
+- `prompt_text`
 - `cwd`
 - `model`
 - `base_url`
@@ -40,3 +41,10 @@ Why no direct imports:
 - keep isolation between benchmark and runner internals
 - keep adapters symmetric across runners
 - avoid privileged integration paths
+
+
+`{prompt_text}` is for CLIs that take the instruction as positional text. `{prompt_file}` should only be used if a CLI explicitly supports prompt-file input.
+
+External CLI adapters run with UTF-8-safe environment defaults (`PYTHONIOENCODING=utf-8`, `PYTHONUTF8=1`).
+
+Diff analysis should ignore known runner bookkeeping directories (for example `.villani/`, `.villani_code/`) so patch metrics reflect task-solution edits only.

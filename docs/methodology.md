@@ -25,3 +25,6 @@ Current core v0.1 coverage includes `minimal_patch` and `localisation` categorie
 ## Behavioural validation
 
 Use `villanibench validate-behavior <suite_path>` to verify each task is behaviourally valid before benchmark runs. This evaluator-only check runs task visible tests and hidden tests in a temporary sandbox before any fix and requires both to fail without timeout.
+
+
+Runner bookkeeping artifacts (for example `.villani/` and `.villani_code/`) are excluded from diff-based metrics (`files_touched`, `final.diff`, `patch_size_lines`) so runners are not penalized for trace/checkpoint files unrelated to the solution patch.
