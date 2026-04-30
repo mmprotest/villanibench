@@ -13,8 +13,35 @@ from villanibench.harness.run import run_suite
 from villanibench.tasks.loader import load_task
 
 
-SUITE_DIR = Path("suites/core_v0_1")
-VB_MIN_001 = load_task(SUITE_DIR / "tasks" / "VB-MIN-001")
+CORE_SUITE_DIR = Path("suites/core_v0_1")
+VB_MIN_001 = load_task(CORE_SUITE_DIR / "tasks" / "VB-MIN-001")
+
+
+def _single_task_suite(tmp_path: Path) -> Path:
+    import shutil
+
+    suite_dir = tmp_path / "suite"
+    task_src = CORE_SUITE_DIR / "tasks" / "VB-MIN-001"
+    task_dst = suite_dir / "tasks" / "VB-MIN-001"
+    shutil.copytree(task_src, task_dst)
+    (suite_dir / "suite.yaml").write_text(
+        "\n".join(
+            [
+                "id: core-fixture",
+                "name: core fixture",
+                "version: 0.1",
+                "description: fixture",
+                "task_count: 1",
+                "categories:",
+                "  - minimal_patch",
+                "budget_profile: lite_v0_1",
+                "visibility: mixed",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return suite_dir
 
 
 class FakeChatClient:
@@ -118,7 +145,7 @@ def test_minimal_control_model_backed_loop_solves_task(tmp_path: Path, monkeypat
     monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
 
     out = tmp_path / "run"
-    run_suite(SUITE_DIR, "minimal_react_control", "dummy-model", out, {"base_url": "http://localhost:1234", "api_key": "dummy"})
+    run_suite(_single_task_suite(tmp_path), "minimal_react_control", "dummy-model", out, {"base_url": "http://localhost:1234", "api_key": "dummy"})
 
     task_dir = out / "tasks" / "VB-MIN-001"
     result = json.loads((task_dir / "result.json").read_text(encoding="utf-8"))

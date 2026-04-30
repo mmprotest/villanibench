@@ -20,7 +20,7 @@ Before runner execution, the sandbox must expose only:
 
 Diff and patch-size analysis is computed only from `repo/` and `tests/visible/` snapshots around runner execution.
 
-Current core v0.1 coverage includes `minimal_patch` and `localisation` categories.
+Current core v0.1 coverage includes `minimal_patch`, `localisation`, `verification`, `state_coherence`, `tool_efficiency`, and `recovery`.
 
 ## Behavioural validation
 
