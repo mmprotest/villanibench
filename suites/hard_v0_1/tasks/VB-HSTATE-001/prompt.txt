@@ -1,0 +1,1 @@
+The dashboard CSV, PDF, and email preview disagree on the active user count. Make them use the same definition.

@@ -1,0 +1,12 @@
+{
+  "allowed_code_files": [
+    "src/vb_hstate_001/csv_export.py",
+    "src/vb_hstate_001/pdf_export.py",
+    "src/vb_hstate_001/email_preview.py",
+    "src/vb_hstate_001/shared.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

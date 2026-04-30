@@ -1,0 +1,1 @@
+Checkout summary, cancellation preview, and warehouse export disagree on reserved inventory. Fix the shared definition.

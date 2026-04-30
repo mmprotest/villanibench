@@ -1,0 +1,1 @@
+The batch scheduler queues disabled jobs when their cron field is present. Fix runnable job selection.

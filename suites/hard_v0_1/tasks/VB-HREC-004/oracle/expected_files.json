@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/webhooks/normalizer.py"
+  ],
+  "strongly_expected_files": [
+    "src/webhooks/normalizer.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/webhooks/suspicious_cache.py"
+  ]
+}

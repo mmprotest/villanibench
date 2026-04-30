@@ -1,0 +1,1 @@
+The CSV importer crashes or drops good rows when malformed rows appear in the file. Fix it without weakening validation.

@@ -1,0 +1,1 @@
+The date parser accepts full dates but mishandles month-only values used by reports. Fix the parser without breaking existing formats.

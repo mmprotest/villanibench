@@ -1,0 +1,1 @@
+The pagination cursor returns duplicate rows around page boundaries. Fix the cursor logic without skipping any rows.

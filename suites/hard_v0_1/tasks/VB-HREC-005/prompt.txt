@@ -1,0 +1,1 @@
+Search deletes fail for differently cased document IDs. The index class looks suspicious, but the bug is in document ID normalisation.

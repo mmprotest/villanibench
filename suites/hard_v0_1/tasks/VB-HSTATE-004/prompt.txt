@@ -1,0 +1,1 @@
+The API, audit log, and export disagree on inherited team permissions. Fix the shared definition.

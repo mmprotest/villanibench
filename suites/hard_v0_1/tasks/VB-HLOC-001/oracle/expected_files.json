@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/checkout/totals.py"
+  ],
+  "strongly_expected_files": [
+    "src/checkout/totals.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/checkout/legacy_totals.py"
+  ]
+}

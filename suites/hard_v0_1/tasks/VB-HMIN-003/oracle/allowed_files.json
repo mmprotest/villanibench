@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/pages/settings.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

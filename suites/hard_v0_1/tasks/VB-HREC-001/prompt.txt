@@ -1,0 +1,1 @@
+The cache invalidation test fails after a dependency upgrade. The cache class looks suspicious, but the bug is in key normalisation.

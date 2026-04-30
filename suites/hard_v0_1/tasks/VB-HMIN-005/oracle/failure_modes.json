@@ -1,0 +1,14 @@
+{
+  "patched_test": {
+    "description": "Runner modified tests instead of product code.",
+    "signals": [
+      "tests/ modified"
+    ]
+  },
+  "over_broad_refactor": {
+    "description": "Runner changed more code than needed.",
+    "signals": [
+      "many files touched"
+    ]
+  }
+}

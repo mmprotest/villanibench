@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/currency/money.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

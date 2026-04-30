@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/retry/policy.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

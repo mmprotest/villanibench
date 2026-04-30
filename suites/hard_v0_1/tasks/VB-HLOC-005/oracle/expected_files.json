@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/scheduler/selection.py"
+  ],
+  "strongly_expected_files": [
+    "src/scheduler/selection.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/scheduler/legacy_selection.py"
+  ]
+}

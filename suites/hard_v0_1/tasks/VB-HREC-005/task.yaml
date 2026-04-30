@@ -1,0 +1,11 @@
+id: VB-HREC-005
+title: Search index deletes fail for differently cased document IDs
+category: recovery
+difficulty: hard
+language: python
+framework: pytest
+prompt_file: prompt.txt
+repo_dir: repo
+visible_test_command: pytest tests/visible
+hidden_test_command: pytest tests/hidden
+budget_profile: standard_v0_1
