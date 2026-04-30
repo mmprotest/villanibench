@@ -123,7 +123,20 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 "task_output_dir": str(task_output),
             }
             _log(f"[task {task_index}/{len(tasks)}] runner start budget_profile={resolved_budget_profile_id}")
-            run_res = adapter.run(task, sandbox, budget, adapter_cfg)
+            adapter.prepare(task, sandbox, adapter_cfg)
+            run_exc: Exception | None = None
+            try:
+                run_res = adapter.run(task, sandbox, budget, adapter_cfg)
+            except Exception as exc:
+                run_exc = exc
+                raise
+            finally:
+                try:
+                    adapter.cleanup(sandbox)
+                except Exception as cleanup_exc:
+                    result.notes = append_note(result.notes, f"Adapter cleanup failed: {cleanup_exc}")
+                    if run_exc is not None:
+                        result.notes = append_note(result.notes, f"Original adapter error: {run_exc}")
             elapsed = time.monotonic() - start
             _log(
                 f"[task {task_index}/{len(tasks)}] runner done elapsed={elapsed:.2f}s crashed={run_res.runner_crashed} timed_out={run_res.timed_out} budget_exceeded={run_res.budget_exceeded}"
@@ -165,17 +178,17 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                     result.forbidden_file_modified = True
                     note = "Runner created tests/hidden before evaluator copied hidden tests."
                     result.notes = append_note(result.notes, note)
-                    raise RuntimeError(note)
-                copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
-                post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
-                _log(
-                    f"[task {task_index}/{len(tasks)}] post hidden exit_code={post_hidden.exit_code} timed_out={post_hidden.timed_out} elapsed={post_hidden.wall_time_sec:.2f}s"
-                )
-                result.hidden_timed_out = post_hidden.timed_out
-                result.success_hidden = post_hidden.exit_code == 0 and not post_hidden.timed_out
-                if post_hidden.timed_out:
-                    result.notes = append_note(result.notes, "Hidden test command timed out.")
-                    result.notes = append_note(result.notes, post_hidden.stderr.strip()[:500])
+                else:
+                    copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
+                    post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
+                    _log(
+                        f"[task {task_index}/{len(tasks)}] post hidden exit_code={post_hidden.exit_code} timed_out={post_hidden.timed_out} elapsed={post_hidden.wall_time_sec:.2f}s"
+                    )
+                    result.hidden_timed_out = post_hidden.timed_out
+                    result.success_hidden = post_hidden.exit_code == 0 and not post_hidden.timed_out
+                    if post_hidden.timed_out:
+                        result.notes = append_note(result.notes, "Hidden test command timed out.")
+                        result.notes = append_note(result.notes, post_hidden.stderr.strip()[:500])
 
             telem = adapter.collect_telemetry(sandbox)
             result.model_calls = telem.model_calls

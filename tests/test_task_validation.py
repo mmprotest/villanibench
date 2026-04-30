@@ -216,6 +216,11 @@ def test_validate_behavior_cli_exits_non_zero_on_failure(tmp_path: Path):
     assert exc.value.code == 1
 
 
+def test_validate_behavior_cli_accepts_timeout_sec(tmp_path: Path):
+    suite = _write_behavior_suite(tmp_path, visible_passes=False, hidden_passes=False)
+    main(["validate-behavior", str(suite), "--timeout-sec", "5"])
+
+
 
 def test_behavior_validation_fails_on_test_syntax_error(tmp_path: Path):
     suite = _write_behavior_suite(tmp_path, visible_passes=False, hidden_passes=False)

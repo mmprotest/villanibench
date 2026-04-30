@@ -46,7 +46,19 @@ def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str,
                     os.killpg(proc.pid, signal.SIGKILL)
                 except Exception:
                     pass
-        out, err = proc.communicate()
-        msg = f"Command timed out after {timeout_sec:.1f}s and was terminated."
+        cleanup_msg = ""
+        try:
+            out, err = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            cleanup_msg = " Process did not terminate cleanly after timeout."
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                out, err = proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                out, err = "", "Process did not terminate cleanly after timeout."
+        msg = f"Command timed out after {timeout_sec:.1f}s and was terminated.{cleanup_msg}"
         err = f"{(err or '').rstrip()}\n{msg}".strip()
         return ProcessResult(124, out or "", err, True, time.monotonic()-start)

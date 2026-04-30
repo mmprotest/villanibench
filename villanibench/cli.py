@@ -57,6 +57,7 @@ def main(argv: list[str] | None = None) -> None:
     vs_p.add_argument("suite_dir")
     vb_p = sub.add_parser("validate-behavior")
     vb_p.add_argument("suite_dir")
+    vb_p.add_argument("--timeout-sec", type=int, default=20)
 
     args = parser.parse_args(argv)
 
@@ -80,7 +81,9 @@ def main(argv: list[str] | None = None) -> None:
         print("OK")
         return
     if args.cmd == "validate-behavior":
-        ok, rows = validate_suite_behavior(Path(args.suite_dir))
+        if args.timeout_sec <= 0:
+            raise SystemExit("--timeout-sec must be a positive integer.")
+        ok, rows = validate_suite_behavior(Path(args.suite_dir), timeout_sec=args.timeout_sec)
         for row in rows:
             if row["ok"]:
                 print(f"{row['task_id']}: OK visible_pre_fails=true hidden_pre_fails=true")

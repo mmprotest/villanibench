@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
+from villanibench.harness.adapters.base import AdapterRunResult, RunnerAdapter, now_iso
 from villanibench.harness.run import run_cmd, run_suite
 
 
@@ -117,7 +118,7 @@ def test_hanging_visible_test_command_does_not_hang_harness(tmp_path: Path, monk
                 "framework: pytest",
                 "prompt_file: prompt.txt",
                 "repo_dir: repo",
-                'visible_test_command: python -c "import time; time.sleep(10)"',
+                'visible_test_command: python -c "import time; time.sleep(100)"',
                 'hidden_test_command: python -c "print(1)"',
                 "budget_profile: lite_v0_1",
             ]
@@ -207,3 +208,20 @@ def test_result_uses_suite_budget_profile_when_task_budget_missing(tmp_path: Pat
     run_suite(suite_dir, "fake_external", "dummy", out, {})
     result = json.loads((out / "tasks" / "T-002/result.json").read_text(encoding="utf-8"))
     assert result["budget_profile"] == "lite_v0_1"
+
+
+def test_run_suite_calls_prepare_and_cleanup(tmp_path: Path, monkeypatch):
+    class _Adapter(RunnerAdapter):
+        name = "fake"
+        def __init__(self): self.calls = []
+        def prepare(self, task, sandbox_dir: Path, config: dict) -> None: self.calls.append("prepare")
+        def cleanup(self, sandbox_dir: Path) -> None: self.calls.append("cleanup")
+        def run(self, task, sandbox_dir: Path, budget, config: dict) -> AdapterRunResult:
+            self.calls.append("run")
+            return AdapterRunResult(0, sandbox_dir/"o.txt", sandbox_dir/"e.txt", now_iso(), now_iso(), False, False, "x", "strict", "external")
+
+    adapter = _Adapter()
+    monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
+    out = tmp_path / "run"
+    run_suite(_single_task_suite(tmp_path), "fake", "dummy", out, {})
+    assert adapter.calls == ["prepare", "run", "cleanup"]

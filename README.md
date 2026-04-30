@@ -92,3 +92,8 @@ Notes for external CLI adapters:
 - Do not use `--prompt-file` for Villani Code in this template.
 - Do not use unsupported `--cwd`; pass `--repo "{cwd}"` instead.
 - VillaniBench sets `PYTHONIOENCODING=utf-8` and `PYTHONUTF8=1` for external runner subprocesses to avoid Windows Unicode console crashes.
+
+
+> **OpenCode warning:** The default OpenCode command template is best-effort and may not match your installed OpenCode CLI. Check `opencode --help` and `opencode run --help`, and pass `--opencode-command-template` before using OpenCode comparisons.
+
+> **Shell-template warning:** External command templates use shell execution. Prompts containing double quotes may require a custom template; built-in task prompts should avoid double quotes until argv-based adapters are available.

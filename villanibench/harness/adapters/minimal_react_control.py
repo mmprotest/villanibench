@@ -3,12 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import subprocess
 import time
 from pathlib import Path
 
 from villanibench.harness.llm import ChatClient, ChatMessage, OpenAICompatibleChatClient
 from villanibench.harness.notes import append_note
+from villanibench.harness.process import run_command_tree
 from villanibench.harness.telemetry import Telemetry
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
@@ -127,10 +127,13 @@ class MinimalReactControlAdapter(RunnerAdapter):
                 i += 1
                 old_lines: list[str] = []
                 while i < len(lines) and lines[i].strip() != "END_OLD" and not re.match(r"^\s*NEW\s*:\s*$", lines[i]):
+                    if action_pattern.match(lines[i]):
+                        return None, {}, "multiple_action_blocks"
                     old_lines.append(lines[i])
                     i += 1
                 if i >= len(lines):
-                    return None, {}, "missing_end_old"
+                    fields["OLD"] = "\n".join(old_lines)
+                    break
                 if re.match(r"^\s*NEW\s*:\s*$", lines[i]):
                     i -= 1
                 fields["OLD"] = "\n".join(old_lines)
@@ -138,10 +141,10 @@ class MinimalReactControlAdapter(RunnerAdapter):
                 i += 1
                 new_lines: list[str] = []
                 while i < len(lines) and lines[i].strip() != "END_NEW":
+                    if action_pattern.match(lines[i]):
+                        return None, {}, "multiple_action_blocks"
                     new_lines.append(lines[i])
                     i += 1
-                if i >= len(lines):
-                    return None, {}, "missing_end_new"
                 fields["NEW"] = "\n".join(new_lines)
             else:
                 kv = key_value_pattern.match(line)
@@ -384,9 +387,6 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             resolved = resolve_repo_path(repo_root, rel_path)
                             if resolved is None or not resolved.exists() or not resolved.is_dir():
                                 obs = "Invalid PATH. Use relative directory under repo."
-                                messages.append(ChatMessage(role="assistant", content=response.content))
-                                messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
-                                continue
                             search_root = resolved
                         results: list[str] = []
                         for p in search_root.rglob("*"):
@@ -408,19 +408,14 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     else:
                         self._telem.shell_commands = (self._telem.shell_commands or 0) + 1
                         last_visible_test_step = step
-                        remaining = max(1, int(deadline - time.monotonic()))
-                        try:
-                            res = subprocess.run(
-                                task.visible_test_command,
-                                cwd=sandbox_dir,
-                                shell=True,
-                                text=True,
-                                capture_output=True,
-                                timeout=remaining,
-                            )
-                            obs = f"exit_code={res.returncode}\nSTDOUT:\n{res.stdout[:6000]}\nSTDERR:\n{res.stderr[:4000]}"
-                        except subprocess.TimeoutExpired:
-                            obs = "run_tests timed out."
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0.1:
+                            obs = "No benchmark wall time remaining to run visible tests."
+                        else:
+                            res = run_command_tree(task.visible_test_command, sandbox_dir, timeout_sec=max(0.1, remaining))
+                            obs = f"exit_code={res.exit_code}\ntimed_out={str(res.timed_out).lower()}\nSTDOUT:\n{res.stdout[:6000]}\nSTDERR:\n{res.stderr[:4000]}"
+                            if res.timed_out:
+                                obs += "\nVisible test command timed out and was terminated."
                 elif action == "write_file":
                     executed = True
                     rel_path = fields.get("PATH", "")
@@ -438,19 +433,18 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             content = fields.get("CONTENT")
                             if content is None:
                                 obs = "write_file requires CONTENT and END_CONTENT. No file was modified."
-                                continue
-                            if not content.strip():
-                                obs = "write_file CONTENT must be non-empty for benchmark safety."
-                                continue
-                            file_path.parent.mkdir(parents=True, exist_ok=True)
-                            file_path.write_text(content, encoding="utf-8")
-                            self._telem.file_writes = (self._telem.file_writes or 0) + 1
-                            patch_attempts += 1
-                            wrote_files = True
-                            last_write_step = step
-                            previous_signature = ""
-                            repeated_action_count = 0
-                            obs = "write_file ok"
+                            elif not content.strip():
+                                obs = "write_file CONTENT must be non-empty for benchmark safety. No file was modified."
+                            else:
+                                file_path.parent.mkdir(parents=True, exist_ok=True)
+                                file_path.write_text(content, encoding="utf-8")
+                                self._telem.file_writes = (self._telem.file_writes or 0) + 1
+                                patch_attempts += 1
+                                wrote_files = True
+                                last_write_step = step
+                                previous_signature = ""
+                                repeated_action_count = 0
+                                obs = "write_file ok"
                 elif action == "replace_text":
                     executed = True
                     rel_path = fields.get("PATH", "")
@@ -479,26 +473,25 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                     old = fields.get("OLD", "")
                                     new = fields.get("NEW", "")
                                     if not old.strip():
-                                        obs = "OLD text must be non-empty."
-                                        continue
-                                    if not new.strip():
-                                        obs = "NEW text must be non-empty."
-                                        continue
-                                    count = current.count(old)
-                                    if count == 0:
-                                        obs = "OLD text not found."
-                                    elif count > 1:
-                                        obs = "OLD text is ambiguous and occurs multiple times."
+                                        obs = "OLD text must be non-empty. No file was modified."
+                                    elif not new.strip():
+                                        obs = "NEW text must be non-empty. No file was modified."
                                     else:
-                                        updated = current.replace(old, new, 1)
-                                        file_path.write_text(updated, encoding="utf-8")
-                                        self._telem.file_writes = (self._telem.file_writes or 0) + 1
-                                        patch_attempts += 1
-                                        wrote_files = True
-                                        last_write_step = step
-                                        previous_signature = ""
-                                        repeated_action_count = 0
-                                        obs = "replace_text ok"
+                                        count = current.count(old)
+                                        if count == 0:
+                                            obs = "OLD text not found."
+                                        elif count > 1:
+                                            obs = "OLD text is ambiguous and occurs multiple times."
+                                        else:
+                                            updated = current.replace(old, new, 1)
+                                            file_path.write_text(updated, encoding="utf-8")
+                                            self._telem.file_writes = (self._telem.file_writes or 0) + 1
+                                            patch_attempts += 1
+                                            wrote_files = True
+                                            last_write_step = step
+                                            previous_signature = ""
+                                            repeated_action_count = 0
+                                            obs = "replace_text ok"
                 elif action == "finish":
                     executed = True
                     if wrote_files and (last_visible_test_step is None or (last_write_step is not None and last_visible_test_step <= last_write_step)):
