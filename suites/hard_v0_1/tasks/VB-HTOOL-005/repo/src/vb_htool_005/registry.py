@@ -3,7 +3,6 @@ from .plugins.slug_plugin import handle as slug_handler
 
 REGISTRY = {
     "json": json_handler,
-    # BUG: slug plugin exists but is not registered.
 }
 
 

@@ -17,9 +17,25 @@ class ProcessResult:
     wall_time_sec: float
 
 
+def _subprocess_text_kwargs() -> dict[str, str | bool]:
+    """Use deterministic subprocess text decoding across platforms.
+
+    Windows defaults to the active console code page, often cp1252. Runner
+    CLIs may emit UTF-8, ANSI escape sequences, box drawing characters, model
+    output, or other bytes that are not valid in that code page. Without an
+    explicit encoding, subprocess reader threads can raise UnicodeDecodeError
+    and make a successful runner look like it crashed.
+    """
+    return {
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+
+
 def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None = None) -> ProcessResult:
     start = time.monotonic()
-    kwargs = dict(cwd=cwd, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    kwargs = dict(cwd=cwd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **_subprocess_text_kwargs())
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -27,11 +43,17 @@ def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str,
     proc = subprocess.Popen(command, **kwargs)
     try:
         out, err = proc.communicate(timeout=timeout_sec)
-        return ProcessResult(proc.returncode or 0, out or "", err or "", False, time.monotonic()-start)
+        return ProcessResult(proc.returncode or 0, out or "", err or "", False, time.monotonic() - start)
     except subprocess.TimeoutExpired:
         if os.name == "nt":
             try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, text=True)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
             except Exception:
                 pass
         else:
@@ -61,7 +83,7 @@ def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str,
                 out, err = "", "Process did not terminate cleanly after timeout."
         msg = f"Command timed out after {timeout_sec:.1f}s and was terminated.{cleanup_msg}"
         err = f"{(err or '').rstrip()}\n{msg}".strip()
-        return ProcessResult(124, out or "", err, True, time.monotonic()-start)
+        return ProcessResult(124, out or "", err, True, time.monotonic() - start)
 
 
 def run_command_tree_argv(
@@ -72,7 +94,7 @@ def run_command_tree_argv(
     stdin_text: str | None = None,
 ) -> ProcessResult:
     start = time.monotonic()
-    kwargs = dict(cwd=cwd, shell=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    kwargs = dict(cwd=cwd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **_subprocess_text_kwargs())
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
@@ -80,11 +102,17 @@ def run_command_tree_argv(
     proc = subprocess.Popen(argv, **kwargs)
     try:
         out, err = proc.communicate(input=stdin_text, timeout=timeout_sec)
-        return ProcessResult(proc.returncode or 0, out or "", err or "", False, time.monotonic()-start)
+        return ProcessResult(proc.returncode or 0, out or "", err or "", False, time.monotonic() - start)
     except subprocess.TimeoutExpired:
         if os.name == "nt":
             try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, text=True)
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
             except Exception:
                 pass
         else:
@@ -114,4 +142,4 @@ def run_command_tree_argv(
                 out, err = "", "Process did not terminate cleanly after timeout."
         msg = f"Command timed out after {timeout_sec:.1f}s and was terminated.{cleanup_msg}"
         err = f"{(err or '').rstrip()}\n{msg}".strip()
-        return ProcessResult(124, out or "", err, True, time.monotonic()-start)
+        return ProcessResult(124, out or "", err, True, time.monotonic() - start)
