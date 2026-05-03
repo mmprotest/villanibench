@@ -5,7 +5,7 @@ import glob
 import json
 from pathlib import Path
 
-from villanibench.harness.compare import compare_runs
+from villanibench.harness.compare import compare_runs, score_pooled
 from villanibench.harness.report import generate_report
 from villanibench.harness.run import run_suite
 from villanibench.tasks.validation import validate_suite_behavior, validate_suite_dir, validate_task_dir
@@ -49,6 +49,11 @@ def main(argv: list[str] | None = None) -> None:
     rep_p = sub.add_parser("report")
     rep_p.add_argument("--comparison", required=True)
     rep_p.add_argument("--output", required=True)
+
+    score_p = sub.add_parser("score")
+    score_p.add_argument("inputs", nargs="+")
+    score_p.add_argument("--control-runner", default="minimal_react_control")
+    score_p.add_argument("--output-dir", required=True)
 
     vt_p = sub.add_parser("validate-task")
     vt_p.add_argument("task_dir")
@@ -135,6 +140,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "report":
         generate_report(Path(args.comparison), Path(args.output))
         print(f"Wrote {args.output}")
+        return
+
+    if args.cmd == "score":
+        inputs=[Path(x) for x in args.inputs]
+        summary=score_pooled(inputs, Path(args.output_dir), control_runner=args.control_runner)
+        print(json.dumps(summary, indent=2))
         return
 
 
