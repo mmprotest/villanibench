@@ -2,184 +2,117 @@ from __future__ import annotations
 
 import csv
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
-from .scoring import aggregate_model_category_scores, aggregate_overall
+from .scoring import SCORING_METHOD, aggregate_overall_paired, aggregate_paired_scores
+
+RESULT_FILENAMES = ("results.jsonl", "task_results.jsonl", "results.json", "task_results.json")
 
 
-def _read_results_jsonl(run_dir: Path) -> list[dict]:
-    path = run_dir / "results.jsonl"
+def _load_rows_from_file(path: Path) -> list[dict]:
+    if path.suffix == ".jsonl":
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("rows", "results", "task_results"):
+            if isinstance(payload.get(k), list):
+                return payload[k]
+    return []
+
+
+def _discover_result_files(paths: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    for p in paths:
+        if p.is_file():
+            files.append(p)
+        elif p.is_dir():
+            for name in RESULT_FILENAMES:
+                files.extend(sorted(p.rglob(name)))
+    uniq = []
+    seen = set()
+    for f in files:
+        rp = f.resolve()
+        if rp not in seen:
+            seen.add(rp)
+            uniq.append(f)
+    return uniq
+
+
+def _normalize_rows(files: list[Path]) -> tuple[list[dict], list[str], int]:
+    required = ["run_id", "runner", "model", "task_id", "suite_id", "budget_profile", "comparison_mode", "status"]
     rows = []
-    if not path.exists():
-        return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            rows.append(json.loads(line))
-    return rows
+    warnings = []
+    excluded = 0
+    for f in files:
+        for r in _load_rows_from_file(f):
+            n = dict(r)
+            n.setdefault("run_id", str(f.parent.name))
+            n.setdefault("budget_profile", "")
+            n.setdefault("comparison_mode", "strict")
+            miss = [k for k in required if k not in n or n.get(k) in (None, "")]
+            if n.get("runner") == "minimal_react_control":
+                n.setdefault("control_kind", "unknown")
+            if miss:
+                excluded += 1
+                warnings.append(f"Excluded row from {f}: missing fields {miss}")
+                continue
+            rows.append(n)
+    return rows, sorted(set(warnings)), excluded
 
 
-def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = "minimal_react_control") -> dict:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for p in run_paths:
-        rows.extend(_read_results_jsonl(p))
-
-    raw_scores = []
-    keyed: dict[tuple, list[dict]] = {}
+def _raw_scores(rows: list[dict]) -> list[dict]:
+    grouped = {}
     for row in rows:
         key = (row["runner"], row["model"], row["suite_id"], row.get("budget_profile", ""), row["comparison_mode"])
-        keyed.setdefault(key, []).append(row)
-
-    warnings: list[str] = []
-    for (runner, model, suite_id, budget_profile, mode), group in keyed.items():
+        grouped.setdefault(key, []).append(row)
+    out = []
+    for key, group in sorted(grouped.items()):
+        runner, model, suite_id, budget_profile, mode = key
         valid = [g for g in group if g["status"] not in {"invalid_task", "harness_error"}]
         if not valid:
             continue
-        raw = sum(1 for g in valid if g["status"] == "success") / len(valid)
-        visible_solve_rate = sum(1 for g in valid if g.get("success_visible")) / len(valid)
-        hidden_solve_rate = sum(1 for g in valid if g.get("success_hidden")) / len(valid)
-        timeout_rate = sum(1 for g in valid if g.get("status") == "timeout") / len(valid)
-        crash_rate = sum(1 for g in valid if g.get("status") == "runner_crash") / len(valid)
-        forbidden_modification_rate = sum(1 for g in valid if g.get("forbidden_file_modified")) / len(valid)
-        test_modification_rate = sum(1 for g in valid if g.get("tests_modified")) / len(valid)
-        raw_scores.append({
-            "runner": runner,
-            "model": model,
-            "suite_id": suite_id,
-            "budget_profile": budget_profile,
-            "comparison_mode": mode,
-            "raw_solve_rate": raw,
-            "visible_solve_rate": visible_solve_rate,
-            "hidden_solve_rate": hidden_solve_rate,
-            "timeout_rate": timeout_rate,
-            "crash_rate": crash_rate,
-            "forbidden_modification_rate": forbidden_modification_rate,
-            "test_modification_rate": test_modification_rate,
-            "valid_task_count": len(valid),
-        })
-        for g in valid:
-            for setting_warning in g.get("setting_warnings", []):
-                warnings.append(setting_warning)
+        out.append({"runner": runner, "model": model, "suite_id": suite_id, "budget_profile": budget_profile, "comparison_mode": mode, "raw_solve_rate": sum(1 for g in valid if g["status"] == "success") / len(valid), "valid_task_count": len(valid)})
+    return out
 
-    vb_by_model, vb_warnings = aggregate_model_category_scores(rows, control_runner=control_runner)
-    warnings.extend(vb_warnings)
-    if not any(r.get("runner") != control_runner for r in rows):
-        warnings.append("No non-control runs found; VillaniBench score not computed.")
-    vb_overall = aggregate_overall(vb_by_model)
 
-    summary = {
-        "control_runner": control_runner,
-        "raw_scores": raw_scores,
-        "villanibench_scores_by_model": vb_by_model,
-        "villanibench_scores_overall": vb_overall,
-        "warnings": sorted(set(warnings)),
-    }
-
+def compare_runs(run_paths: list[Path], output_dir: Path, control_runner: str = "minimal_react_control") -> dict:
+    files = _discover_result_files(run_paths)
+    rows, warnings, excluded = _normalize_rows(files)
+    vb_by_model, w2 = aggregate_paired_scores(rows, control_runner=control_runner)
+    warnings.extend(w2)
+    vb_overall = aggregate_overall_paired(vb_by_model)
+    for r in vb_by_model:
+        r.pop("_paired_rows", None)
+    summary = {"scoring_method": SCORING_METHOD, "generated_at": datetime.now(timezone.utc).isoformat(), "control_runner": control_runner, "input_sources": [str(f) for f in files], "loaded_row_count": len(rows), "excluded_row_count": excluded, "raw_scores": _raw_scores(rows), "villanibench_scores_by_model": vb_by_model, "villanibench_scores_overall": vb_overall, "warnings": sorted(set(warnings))}
+    output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "comparison_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-
-    csv_path = output_dir / "results_combined.csv"
+    (output_dir / "REPORT.md").write_text(_render_report(summary), encoding="utf-8")
     if rows:
-        fields = sorted({k for row in rows for k in row.keys()})
-        with csv_path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=fields)
-            writer.writeheader()
-            writer.writerows(rows)
+        with (output_dir / "results_combined.csv").open("w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=sorted({k for row in rows for k in row.keys()}))
+            w.writeheader(); w.writerows(rows)
+    return summary
 
-    report_md = output_dir / "REPORT.md"
-    report_md.write_text(_render_report(summary), encoding="utf-8")
+
+def score_pooled(run_paths: list[Path], output_dir: Path, control_runner: str = "minimal_react_control") -> dict:
+    summary = compare_runs(run_paths, output_dir, control_runner=control_runner)
+    (output_dir / "pooled_score_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (output_dir / "pooled_score_report.md").write_text(_render_report(summary), encoding="utf-8")
     return summary
 
 
 def _render_report(summary: dict) -> str:
-    lines = ["# VillaniBench Comparison Report", ""]
-    vb_rows = summary.get("villanibench_scores_by_model", [])
-    has_valid_score = any(row.get("score_validity") == "valid" and row.get("model_villanibench_score") is not None for row in vb_rows)
-    has_only_diagnostic_scores = bool(vb_rows) and all(row.get("score_validity") == "diagnostic_only" for row in vb_rows)
-
-    if not has_valid_score:
-        lines.append("No valid VillaniBench Score is available for this comparison. See raw diagnostics below.")
-        lines.append("")
-    if has_only_diagnostic_scores:
-        lines.append("Only diagnostic VillaniBench Scores are available. Do not treat this as a valid benchmark ranking.")
-        lines.append("")
-
-    lines += [
-        "## VillaniBench Score",
-        "",
-        "This is the main score.",
-        "It is relative to `minimal_react_control`.",
-        "Raw solve rate is diagnostic only.",
-        "",
-        "| runner | model | suite_id | budget_profile | comparison_mode | score_validity | VillaniBench Score | backend_stability_stddev | raw_solve_rate | valid_task_count |",
-        "|---|---|---|---|---|---|---:|---|---:|---:|",
-    ]
-
-    raw_index = {
-        (r["runner"], r["model"], r["suite_id"], r.get("budget_profile", ""), r["comparison_mode"]): r
-        for r in summary["raw_scores"]
-    }
-    for row in vb_rows:
-        raw = raw_index.get(
-            (row["runner"], row["model"], row["suite_id"], row.get("budget_profile", ""), row["comparison_mode"]),
-            {},
-        )
-        score = row["model_villanibench_score"]
-        score_text = "null" if score is None else f"{score:.3f}"
-        lines.append(
-            f"| {row['runner']} | {row['model']} | {row['suite_id']} | {row.get('budget_profile', '')} | {row['comparison_mode']} | "
-            f"{row.get('score_validity', 'not_computed')} | {score_text} | n/a | "
-            f"{raw.get('raw_solve_rate', 0.0):.3f} | {raw.get('valid_task_count', 0)} |"
-        )
-
-    lines += ["", "## Score validity", "", "- `valid`: score is control-normalized using a comparable model-backed control run."]
-    lines.append("- `diagnostic_only`: score is computed against placeholder control and should not be used for ranking.")
-    lines.append("- `not_computed`: no comparable control baseline exists.")
-
-    if vb_rows and all(
-        row.get("score_validity") in {"diagnostic_only", "not_computed"} for row in vb_rows
-    ):
-        lines += [
-            "",
-            "**Warning:** all VillaniBench Scores are diagnostic or missing, so this report is not a benchmark ranking.",
-        ]
-
-    lines += ["", "## Backend stability", ""]
-    lines += [
-        "| runner | models | mean_villanibench_score | backend_stability_stddev | acceptable_variance_target | stable? |",
-        "|---|---|---:|---|---:|---|",
-    ]
-    for row in summary.get("villanibench_scores_overall", []):
-        stddev = "insufficient_models" if row.get("backend_stability_stddev") is None else f"{row['backend_stability_stddev']:.3f}"
-        lines.append(
-            f"| {row['runner']} | {', '.join(row['models'])} | {row['mean_villanibench_score']:.3f} | {stddev} | "
-            f"{row['acceptable_variance_target']:.2f} | {row.get('stable', 'insufficient_models')} |"
-        )
-
-    lines += ["", "## Category breakdown", ""]
-    lines += [
-        "| runner | model | category | control_solve_rate | runner_solve_rate | villanibench_score | valid_task_count |",
-        "|---|---|---|---:|---:|---:|---:|",
-    ]
-    for row in summary["villanibench_scores_by_model"]:
-        for c in row["category_scores"]:
-            lines.append(
-                f"| {row['runner']} | {row['model']} | {c['category']} | {c['control_solve_rate']:.3f} | "
-                f"{c['runner_solve_rate']:.3f} | {c['villanibench_score']:.3f} | {c['valid_task_count']} |"
-            )
-
-    lines += ["", "## Raw solve-rate diagnostics", ""]
-    lines += [
-        "| runner | model | suite_id | budget_profile | comparison_mode | raw_solve_rate | visible_solve_rate | hidden_solve_rate | timeout_rate | crash_rate | forbidden_modification_rate | test_modification_rate |",
-        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-    for row in summary["raw_scores"]:
-        lines.append(
-            f"| {row['runner']} | {row['model']} | {row['suite_id']} | {row.get('budget_profile', '')} | {row['comparison_mode']} | {row['raw_solve_rate']:.3f} | {row['visible_solve_rate']:.3f} | "
-            f"{row['hidden_solve_rate']:.3f} | {row['timeout_rate']:.3f} | {row['crash_rate']:.3f} | "
-            f"{row['forbidden_modification_rate']:.3f} | {row['test_modification_rate']:.3f} |"
-        )
-
-    lines += ["", "## Warnings", ""]
-    for w in summary.get("warnings", []):
-        lines.append(f"- {w}")
+    lines = ["# VillaniBench Score Report", ""]
+    lines += ["## Overall VillaniBench Score", "", "| runner | suite_id | budget_profile | comparison_mode | villanibench_score | 95% CI | models | paired_task_count | worst_model_score | score_validity |", "|---|---|---|---|---:|---|---|---:|---:|---|"]
+    for r in summary.get("villanibench_scores_overall", []):
+        score = "null" if r.get("villanibench_score") is None else f"{r['villanibench_score']:.3f}"
+        ci = "n/a" if r.get("score_ci_low") is None else f"[{r['score_ci_low']:.3f}, {r['score_ci_high']:.3f}]"
+        lines.append(f"| {r['runner']} | {r['suite_id']} | {r.get('budget_profile','')} | {r['comparison_mode']} | {score} | {ci} | {', '.join(r.get('models',[]))} | {r.get('paired_task_count',0)} | {r.get('worst_model_score','n/a')} | {r.get('score_validity')} |")
+    lines += ["", "## Per-model paired breakdown", "", "| runner | model | villanibench_score | control_solve_rate | runner_solve_rate | runner_wins | control_wins | ties_success | ties_failure | paired_task_count |", "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for r in summary.get("villanibench_scores_by_model", []):
+        s = "null" if r.get("villanibench_score") is None else f"{r['villanibench_score']:.3f}"
+        lines.append(f"| {r['runner']} | {r['model']} | {s} | {r.get('control_solve_rate',0):.3f} | {r.get('runner_solve_rate',0):.3f} | {r.get('runner_wins',0)} | {r.get('control_wins',0)} | {r.get('ties_success',0)} | {r.get('ties_failure',0)} | {r.get('paired_task_count',0)} |")
     return "\n".join(lines) + "\n"
