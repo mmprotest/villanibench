@@ -1,143 +1,127 @@
 from __future__ import annotations
 
+import random
 import statistics
 from collections import defaultdict
+from typing import Iterable
 
 
-def villanibench_category_score(control: float, runner: float) -> float:
-    if control == 1.0 and runner == 1.0:
-        return 0.0
-    if runner >= control:
-        if control == 1.0:
-            return (runner - control) / control
-        if control == 0.0:
-            return runner
-        return (runner - control) / (1 - control)
-    if control == 0.0:
-        return 0.0
-    return (runner - control) / control
+SCORING_METHOD = "paired_control_adjusted_net_success_v1"
 
 
-def aggregate_model_category_scores(rows: list[dict], control_runner: str = "minimal_react_control") -> tuple[list[dict], list[str]]:
+def is_success(row: dict) -> int:
+    return 1 if row.get("status") == "success" else 0
+
+
+def _pair_key(row: dict) -> tuple:
+    return (
+        row["suite_id"],
+        row["model"],
+        row.get("budget_profile", ""),
+        row["comparison_mode"],
+        row["task_id"],
+    )
+
+
+def _runner_key(row: dict) -> tuple:
+    return (row["runner"],) + _pair_key(row)
+
+
+def bootstrap_task_ci(paired_rows: list[dict], iterations: int = 10_000, seed: int = 0) -> tuple[float, float]:
+    if not paired_rows:
+        return (0.0, 0.0)
+    tasks = sorted({r["task_id"] for r in paired_rows})
+    task_to_delta: dict[str, list[int]] = defaultdict(list)
+    for row in paired_rows:
+        task_to_delta[row["task_id"]].append(row["delta"])
+    observed = 100.0 * statistics.mean(r["delta"] for r in paired_rows)
+    if len(tasks) <= 1:
+        return (observed, observed)
+    rng = random.Random(seed)
+    samples: list[float] = []
+    for _ in range(iterations):
+        sampled = [tasks[rng.randrange(0, len(tasks))] for _ in range(len(tasks))]
+        deltas: list[int] = []
+        for t in sampled:
+            deltas.extend(task_to_delta[t])
+        samples.append(100.0 * statistics.mean(deltas))
+    samples.sort()
+    lo = samples[int(0.025 * (len(samples) - 1))]
+    hi = samples[int(0.975 * (len(samples) - 1))]
+    return lo, hi
+
+
+def aggregate_paired_scores(rows: list[dict], control_runner: str = "minimal_react_control") -> tuple[list[dict], list[str]]:
     warnings: list[str] = []
-    grouped: dict[tuple, list[dict]] = defaultdict(list)
+    idx: dict[tuple, dict] = {}
     for r in rows:
-        grouped[(r["suite_id"], r["model"], r.get("budget_profile", ""), r["comparison_mode"], r["runner"])].append(r)
+        k = _runner_key(r)
+        if k in idx:
+            raise ValueError(f"Duplicate comparable row detected for key={k}")
+        idx[k] = r
 
-    control_index: dict[tuple, list[dict]] = {
-        (k[0], k[1], k[2], k[3]): v for k, v in grouped.items() if k[4] == control_runner
-    }
-
-    available_modes: dict[tuple, set[str]] = defaultdict(set)
-    for (suite_id, model, budget_profile, mode, runner), _ in grouped.items():
-        if runner == control_runner:
-            available_modes[(suite_id, model, budget_profile)].add(mode)
-
-    outputs: list[dict] = []
-    for (suite_id, model, budget_profile, mode, runner), runner_rows in grouped.items():
-        if runner == control_runner:
-            continue
-        control_rows = control_index.get((suite_id, model, budget_profile, mode))
-        if not control_rows:
-            modes = available_modes.get((suite_id, model, budget_profile), set())
-            mode_warning = None
-            if modes:
-                sampled_mode = sorted(modes)[0]
-                mode_warning = (
-                    f"Runner {runner} has comparison_mode={mode} but available minimal_react_control run has "
-                    f"comparison_mode={sampled_mode}; VillaniBench Score not computed."
-                )
-                warnings.append(mode_warning)
-            else:
-                warnings.append("No matching minimal_react_control run found; VillaniBench Score not computed.")
-            outputs.append({
-                "runner": runner,
-                "model": model,
-                "suite_id": suite_id,
-                "budget_profile": budget_profile,
-                "comparison_mode": mode,
-                "category_scores": [],
-                "model_villanibench_score": None,
-                "score_validity": "not_computed",
-                "score_warning": mode_warning or "No matching minimal_react_control run found; VillaniBench Score not computed.",
-            })
-            continue
-
-        control_kind = control_rows[0].get("control_kind")
-        if control_kind is None and control_rows[0].get("runner") == control_runner:
-            control_kind = "unknown"
-            warnings.append("Control run missing control_kind; inferred unknown.")
-
-        score_validity = "valid"
-        score_warning = None
-        if control_kind == "placeholder":
-            score_validity = "diagnostic_only"
-            score_warning = "VillaniBench Score is diagnostic only because control_kind=placeholder."
-            warnings.append(score_warning)
-        elif control_kind != "model_backed":
-            score_validity = "not_computed"
-            score_warning = "Control baseline is not model_backed; VillaniBench Score not computed."
-            warnings.append(score_warning)
-
-        categories = sorted({r["category"] for r in runner_rows})
-        category_scores = []
-        for c in categories:
-            rr = [x for x in runner_rows if x["category"] == c and x["status"] not in {"invalid_task", "harness_error"}]
-            cr = [x for x in control_rows if x["category"] == c and x["status"] not in {"invalid_task", "harness_error"}]
-            task_ids = {x["task_id"] for x in rr} & {x["task_id"] for x in cr}
-            rr = [x for x in rr if x["task_id"] in task_ids]
-            cr = [x for x in cr if x["task_id"] in task_ids]
-            if not rr or not cr:
+    group_keys = sorted({(r["runner"], r["suite_id"], r["model"], r.get("budget_profile", ""), r["comparison_mode"]) for r in rows if r["runner"] != control_runner})
+    out: list[dict] = []
+    for runner, suite_id, model, budget_profile, mode in group_keys:
+        runner_rows = [r for r in rows if (r["runner"], r["suite_id"], r["model"], r.get("budget_profile", ""), r["comparison_mode"]) == (runner, suite_id, model, budget_profile, mode)]
+        pairs = []
+        missing = 0
+        non_model_backed = 0
+        for rr in runner_rows:
+            ck = (control_runner, suite_id, model, budget_profile, mode, rr["task_id"])
+            cr = idx.get(ck)
+            if cr is None:
+                missing += 1
                 continue
-            rs = sum(1 for x in rr if x["status"] == "success") / len(rr)
-            cs = sum(1 for x in cr if x["status"] == "success") / len(cr)
-            category_scores.append({
-                "category": c,
-                "control_solve_rate": cs,
-                "runner_solve_rate": rs,
-                "villanibench_score": villanibench_category_score(cs, rs),
-                "valid_task_count": len(rr),
-            })
+            if cr.get("control_kind") != "model_backed":
+                non_model_backed += 1
+                continue
+            pairs.append({"task_id": rr["task_id"], "delta": is_success(rr) - is_success(cr), "runner_success": is_success(rr), "control_success": is_success(cr)})
 
-        model_score = statistics.mean([c["villanibench_score"] for c in category_scores]) if category_scores else None
-        output_row = {
-            "runner": runner,
-            "model": model,
-            "suite_id": suite_id,
-            "budget_profile": budget_profile,
-            "comparison_mode": mode,
-            "category_scores": category_scores,
-            "model_villanibench_score": model_score,
-            "score_validity": score_validity if model_score is not None else "not_computed",
-            "score_warning": score_warning if model_score is not None else "No overlapping valid tasks with control; VillaniBench Score not computed.",
-            "valid_task_count": sum(c["valid_task_count"] for c in category_scores),
-        }
-        if score_validity == "not_computed":
-            output_row["model_villanibench_score"] = None
-        outputs.append(output_row)
-    return outputs, sorted(set(warnings))
-
-
-def aggregate_overall(vb_by_model: list[dict], target_stddev: float = 0.10) -> list[dict]:
-    grouped: dict[tuple, list[dict]] = defaultdict(list)
-    for row in vb_by_model:
-        if row["model_villanibench_score"] is None:
+        if not pairs:
+            msg = "No comparable model-backed control rows were found."
+            if non_model_backed:
+                msg = f"{msg} Excluded {non_model_backed} non-model-backed control matches."
+            out.append({"runner": runner, "model": model, "suite_id": suite_id, "budget_profile": budget_profile, "comparison_mode": mode, "score_validity": "not_computed", "score_warning": msg, "villanibench_score": None, "paired_task_count": 0, "runner_wins": 0, "control_wins": 0, "ties_success": 0, "ties_failure": 0, "control_solve_rate": 0.0, "runner_solve_rate": 0.0, "absolute_lift": None})
+            warnings.append(msg)
             continue
-        grouped[(row["runner"], row["suite_id"], row.get("budget_profile", ""), row["comparison_mode"], row.get("score_validity", "not_computed"))].append(row)
+        runner_wins = sum(1 for p in pairs if p["delta"] == 1)
+        control_wins = sum(1 for p in pairs if p["delta"] == -1)
+        ties_success = sum(1 for p in pairs if p["delta"] == 0 and p["runner_success"] == 1)
+        ties_failure = sum(1 for p in pairs if p["delta"] == 0 and p["runner_success"] == 0)
+        runner_rate = statistics.mean(p["runner_success"] for p in pairs)
+        control_rate = statistics.mean(p["control_success"] for p in pairs)
+        score = 100.0 * statistics.mean(p["delta"] for p in pairs)
+        warn = None
+        if missing:
+            warn = f"Missing {missing} matching control rows; score computed from matched rows only."
+            warnings.append(warn)
+        out.append({"runner": runner, "model": model, "suite_id": suite_id, "budget_profile": budget_profile, "comparison_mode": mode, "score_validity": "valid", "score_warning": warn, "villanibench_score": score, "paired_task_count": len(pairs), "runner_wins": runner_wins, "control_wins": control_wins, "ties_success": ties_success, "ties_failure": ties_failure, "control_solve_rate": control_rate, "runner_solve_rate": runner_rate, "absolute_lift": 100.0 * (runner_rate - control_rate), "_paired_rows": pairs})
+    return out, sorted(set(warnings))
 
-    out = []
-    for (runner, suite_id, budget_profile, mode, score_validity), rows in grouped.items():
-        scores = [r["model_villanibench_score"] for r in rows]
-        out.append({
-            "runner": runner,
-            "suite_id": suite_id,
-            "budget_profile": budget_profile,
-            "comparison_mode": mode,
-            "score_validity": score_validity,
-            "mean_villanibench_score": statistics.mean(scores),
-            "backend_stability_stddev": statistics.pstdev(scores) if len(scores) > 1 else None,
-            "models": [r["model"] for r in rows],
-            "acceptable_variance_target": target_stddev,
-            "stable": ("insufficient_models" if len(scores) < 2 else statistics.pstdev(scores) <= target_stddev),
-        })
+
+def aggregate_overall_paired(vb_by_model: list[dict], iterations: int = 10_000, seed: int = 0) -> list[dict]:
+    grouped: dict[tuple, list[dict]] = defaultdict(list)
+    for r in vb_by_model:
+        grouped[(r["runner"], r["suite_id"], r.get("budget_profile", ""), r["comparison_mode"])].append(r)
+    out: list[dict] = []
+    for key, rows in sorted(grouped.items()):
+        runner, suite_id, budget_profile, mode = key
+        valids = [r for r in rows if r["score_validity"] == "valid"]
+        if not valids:
+            out.append({"runner": runner, "suite_id": suite_id, "budget_profile": budget_profile, "comparison_mode": mode, "score_validity": "not_computed", "score_warning": "No valid per-model scores.", "villanibench_score": None, "score_ci_low": None, "score_ci_high": None, "ci_method": "task_bootstrap", "ci_iterations": iterations, "models": [], "model_count": 0, "paired_task_count": 0})
+            continue
+        paired = []
+        for r in valids:
+            for p in r["_paired_rows"]:
+                paired.append({"task_id": p["task_id"], "delta": p["delta"]})
+        score = 100.0 * statistics.mean(p["delta"] for p in paired)
+        lo, hi = bootstrap_task_ci(paired, iterations=iterations, seed=seed)
+        runner_success = sum(p["runner_success"] for r in valids for p in r["_paired_rows"])
+        control_success = sum(p["control_success"] for r in valids for p in r["_paired_rows"])
+        n = len(paired)
+        rr = runner_success / n
+        cr = control_success / n
+        rel = None if cr == 0 else 100.0 * (rr - cr) / cr
+        out.append({"runner": runner, "suite_id": suite_id, "budget_profile": budget_profile, "comparison_mode": mode, "score_validity": "valid", "score_warning": None if rel is not None else "relative_lift is undefined because control_solve_rate is 0.", "villanibench_score": score, "score_ci_low": lo, "score_ci_high": hi, "ci_method": "task_bootstrap", "ci_iterations": iterations, "models": sorted([r["model"] for r in valids]), "model_count": len(valids), "paired_task_count": n, "mean_model_score": statistics.mean(r["villanibench_score"] for r in valids), "backend_stability_stddev": statistics.pstdev(r["villanibench_score"] for r in valids) if len(valids) > 1 else None, "worst_model_score": min(r["villanibench_score"] for r in valids), "best_model_score": max(r["villanibench_score"] for r in valids), "runner_wins": sum(r["runner_wins"] for r in valids), "control_wins": sum(r["control_wins"] for r in valids), "ties_success": sum(r["ties_success"] for r in valids), "ties_failure": sum(r["ties_failure"] for r in valids), "control_solve_rate": cr, "runner_solve_rate": rr, "relative_lift": rel})
     return out
