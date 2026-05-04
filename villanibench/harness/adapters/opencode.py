@@ -39,7 +39,7 @@ def _raw_model_id(model: Any) -> str:
 
     prefix = f"{OPENCODE_PROVIDER_ID}/"
     if value.startswith(prefix):
-        value = value[len(prefix) :]
+        value = value[len(prefix):]
 
     if not value:
         raise ValueError("OpenCode model cannot be empty")
@@ -95,45 +95,25 @@ class OpenCodeAdapter(ExternalCliAdapter):
     def __init__(self) -> None:
         super().__init__(name="opencode", default_template=DEFAULT_TEMPLATE)
 
-    def prepare_template_vars(self, values: dict[str, Any]) -> dict[str, Any]:
-        """
-        ExternalCliAdapter should call this before formatting DEFAULT_TEMPLATE.
+    def prepare(self, task, sandbox_dir: Path, config: dict) -> None:
+        base_url = _normalise_base_url(config.get("base_url"))
+        if base_url is None:
+            return None
 
-        Required incoming values:
-          - cwd
-          - model
-          - prompt_text
+        model = config.get("model")
+        if not model:
+            raise ValueError("OpenCode adapter requires model when base_url is set")
 
-        Optional incoming values:
-          - base_url
-          - api_key
-          - env
+        cwd = (sandbox_dir / "repo").resolve()
 
-        If base_url is present, this writes cwd/opencode.json and rewrites
-        model to villani-local/<raw-model-id>, forcing OpenCode to use the
-        benchmark's local OpenAI-compatible endpoint instead of hosted inference.
-        """
-        result = dict(values)
+        qualified_model = _write_project_opencode_config(
+            cwd=cwd,
+            model=str(model),
+            base_url=base_url,
+        )
 
-        cwd = result.get("cwd")
-        model = result.get("model")
-        base_url = _normalise_base_url(result.get("base_url"))
-        api_key = result.get("api_key") or "dummy"
+        # This is the critical mutation. ExternalCliAdapter.run() later reads
+        # config["model"] when rendering the command template.
+        config["model"] = qualified_model
 
-        env = dict(result.get("env") or os.environ)
-        env.setdefault(OPENCODE_API_KEY_ENV, str(api_key))
-        result["env"] = env
-
-        if base_url is not None:
-            if not cwd:
-                raise ValueError("OpenCode adapter requires cwd when base_url is set")
-            if not model:
-                raise ValueError("OpenCode adapter requires model when base_url is set")
-
-            result["model"] = _write_project_opencode_config(
-                cwd=Path(cwd),
-                model=str(model),
-                base_url=base_url,
-            )
-
-        return result
+        return None

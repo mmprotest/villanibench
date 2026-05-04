@@ -1,3 +1,5 @@
+from .shared import is_counted
+
+
 def effective_permissions(records):
-    # BUG: stale duplicate definition counts truthy state values.
-    return sum(1 for r in records if r.get('kind'))
+    return sum(1 for r in records if is_counted(r))
