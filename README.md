@@ -97,3 +97,29 @@ Notes for external CLI adapters:
 > **OpenCode warning:** The default OpenCode command template is best-effort and may not match your installed OpenCode CLI. Check `opencode --help` and `opencode run --help`, and pass `--opencode-command-template` before using OpenCode comparisons.
 
 > **Shell-template warning:** External command templates use shell execution. Prompts containing double quotes may require a custom template; built-in task prompts should avoid double quotes until argv-based adapters are available.
+
+
+### Qwen Code CLI adapter (`qwen-cli`)
+
+Install Qwen Code CLI:
+
+```bash
+npm install -g @qwen-code/qwen-code@latest
+```
+
+Run with the Qwen adapter:
+
+```bash
+villanibench run \
+  --suite suites/core_v0_1 \
+  --runner qwen-cli \
+  --model "<exact-model-id-served-by-your-backend>" \
+  --base-url http://127.0.0.1:1234/v1 \
+  --api-key dummy \
+  --output-dir artifacts/qwen_cli_run
+```
+
+Notes:
+- Adapter writes project-local `.qwen/settings.json` inside each task repository sandbox.
+- Adapter does not rely on global `~/.qwen/settings.json`.
+- Model string must match your backend-served model id exactly.
