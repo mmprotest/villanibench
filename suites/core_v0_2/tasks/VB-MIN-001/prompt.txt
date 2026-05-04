@@ -1,0 +1,1 @@
+The CLI help output shows the wrong default retry count. Fix the source of truth.

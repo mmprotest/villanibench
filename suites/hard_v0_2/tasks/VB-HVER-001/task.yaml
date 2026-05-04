@@ -1,0 +1,11 @@
+id: VB-HVER-001
+title: CSV importer preserves valid rows after malformed input
+category: verification
+difficulty: hard
+language: python
+framework: pytest
+prompt_file: prompt.txt
+repo_dir: repo
+visible_test_command: pytest tests/visible
+hidden_test_command: pytest tests/hidden
+budget_profile: standard_v0_1

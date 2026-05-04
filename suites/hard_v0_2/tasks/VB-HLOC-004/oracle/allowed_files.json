@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/quota/usage.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

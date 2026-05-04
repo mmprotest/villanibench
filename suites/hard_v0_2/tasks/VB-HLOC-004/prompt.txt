@@ -1,0 +1,9 @@
+Quota usage reports currently count archived resources.
+
+Fix `quota.used_units` so it returns the sum of `units` for active resources only.
+
+Rules:
+- A resource is archived only when `archived` is exactly `True`.
+- Resources with `archived: False` or no `archived` field are active and should be counted.
+- Keep the public API `quota.api.used_units` working.
+- Do not edit tests.

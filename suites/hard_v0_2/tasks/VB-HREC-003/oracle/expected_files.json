@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/payloads/normalizer.py"
+  ],
+  "strongly_expected_files": [
+    "src/payloads/normalizer.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/payloads/suspicious_cache.py"
+  ]
+}

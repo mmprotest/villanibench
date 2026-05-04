@@ -1,0 +1,3 @@
+CSV exports fail because the CSV exporter implementation exists but is not registered in the exporter registry.
+
+Fix the registry so callers can export rows with format_name="csv" through the existing export service. Preserve the existing JSON exporter behavior and keep the fix focused on the registry.

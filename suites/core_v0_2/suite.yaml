@@ -1,0 +1,14 @@
+id: villanibench-core-v0.2
+name: VillaniBench Core v0.2
+version: "0.1"
+description: Core benchmark for evaluating agent runners under fixed backend models.
+task_count: 30
+categories:
+  - minimal_patch
+  - localisation
+  - verification
+  - state_coherence
+  - tool_efficiency
+  - recovery
+budget_profile: standard_v0_2
+visibility: public

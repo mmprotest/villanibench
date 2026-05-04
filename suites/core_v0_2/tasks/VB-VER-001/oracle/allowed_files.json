@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/importer/csv_import.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

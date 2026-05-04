@@ -1,0 +1,1 @@
+Audit logs use system as the actor even when a user initiated the sync. Fix the actor resolution.

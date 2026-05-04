@@ -1,0 +1,1 @@
+Support SLA reports mark tickets as breached even when they were paused. Fix the breach calculation.

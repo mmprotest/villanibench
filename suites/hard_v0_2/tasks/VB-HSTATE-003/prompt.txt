@@ -1,0 +1,5 @@
+Reserved inventory must be counted consistently across the checkout summary, cancellation preview, and warehouse export paths.
+
+The canonical rule is: count only records whose state is exactly "reserved". Released records, cancelled records, unknown states, falsey states, and records with no state must not be counted.
+
+Fix the product code so all active export/preview paths use the same shared reserved-unit definition. Do not change tests.

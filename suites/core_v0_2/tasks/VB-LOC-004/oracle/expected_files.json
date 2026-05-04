@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/features/resolver.py"
+  ],
+  "strongly_expected_files": [
+    "src/features/resolver.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/features/legacy_resolver.py"
+  ]
+}

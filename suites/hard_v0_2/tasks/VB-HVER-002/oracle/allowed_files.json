@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/feed/pagination.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

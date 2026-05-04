@@ -1,0 +1,11 @@
+id: VB-HSTATE-002
+title: Subscription billable status uses the wrong shared state definition
+category: state_coherence
+difficulty: medium
+language: python
+framework: pytest
+prompt_file: prompt.txt
+repo_dir: repo
+visible_test_command: pytest tests/visible
+hidden_test_command: pytest tests/hidden
+budget_profile: standard_v0_1

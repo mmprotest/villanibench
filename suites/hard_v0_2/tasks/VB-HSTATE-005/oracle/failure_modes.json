@@ -1,0 +1,28 @@
+{
+  "patched_test": {
+    "description": "Runner modified tests instead of product code.",
+    "signals": [
+      "tests/ modified"
+    ]
+  },
+  "wrong_patch_location": {
+    "description": "Runner patched individual export/preview paths instead of the shared actor definition.",
+    "signals": [
+      "src/vb_hstate_005/csv_export.py",
+      "src/vb_hstate_005/pdf_export.py",
+      "src/vb_hstate_005/email_preview.py"
+    ]
+  },
+  "edited_decoy_file": {
+    "description": "Runner edited a plausible but incorrect decoy file.",
+    "signals": [
+      "src/vb_hstate_005/legacy_metrics.py"
+    ]
+  },
+  "over_broad_refactor": {
+    "description": "Runner changed more code than needed.",
+    "signals": [
+      "many files touched"
+    ]
+  }
+}

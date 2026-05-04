@@ -1,0 +1,1 @@
+The retry delay default exceeds the documented maximum. Fix the source of truth.

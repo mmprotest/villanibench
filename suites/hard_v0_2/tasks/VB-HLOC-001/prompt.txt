@@ -1,0 +1,1 @@
+Checkout totals are wrong when an order-level discount is applied alongside shipping and tax. Apply the discount to the taxable subtotal, then add shipping. Fix the source of truth.

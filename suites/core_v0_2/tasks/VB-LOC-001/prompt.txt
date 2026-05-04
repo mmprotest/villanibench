@@ -1,0 +1,1 @@
+Exported invoices show the wrong total when discounts and tax both apply. Fix the bug.

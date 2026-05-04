@@ -3,7 +3,7 @@ from __future__ import annotations
 from .external_cli import ExternalCliAdapter
 
 
-DEFAULT_TEMPLATE = "opencode run --model {model} --cwd {cwd} --prompt-file {prompt_file}"
+DEFAULT_TEMPLATE = "opencode run {prompt_text} --model {model} --cwd {cwd}"
 
 
 class OpenCodeAdapter(ExternalCliAdapter):

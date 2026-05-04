@@ -1,0 +1,1 @@
+Users are sometimes logged out immediately after refreshing their session. Fix the bug.

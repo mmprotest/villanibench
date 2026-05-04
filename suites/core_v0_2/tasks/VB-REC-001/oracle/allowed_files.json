@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/cache/keys.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

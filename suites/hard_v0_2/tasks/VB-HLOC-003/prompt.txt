@@ -1,0 +1,1 @@
+Converted invoice lines are off by a cent for fractional exchange rates. Fix the conversion source of truth.

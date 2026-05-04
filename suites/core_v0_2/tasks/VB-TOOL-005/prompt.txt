@@ -1,0 +1,1 @@
+The CLI accepts --dry-run but still executes real writes. Fix option propagation.

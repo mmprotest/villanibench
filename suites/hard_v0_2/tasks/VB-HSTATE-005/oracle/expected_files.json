@@ -1,0 +1,15 @@
+{
+  "expected_files": [
+    "src/vb_hstate_005/shared.py"
+  ],
+  "strongly_expected_files": [
+    "src/vb_hstate_005/shared.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/vb_hstate_005/legacy_metrics.py",
+    "src/vb_hstate_005/csv_export.py",
+    "src/vb_hstate_005/pdf_export.py",
+    "src/vb_hstate_005/email_preview.py"
+  ]
+}

@@ -1,0 +1,1 @@
+The channel named sms exists but the application cannot use it. Fix the registration without touching plugin implementations.

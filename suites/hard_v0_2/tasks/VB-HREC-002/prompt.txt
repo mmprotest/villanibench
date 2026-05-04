@@ -1,0 +1,1 @@
+Admin users are denied on nested routes. The middleware looks suspicious, but the bug is in route pattern normalisation.

@@ -1,0 +1,32 @@
+{
+  "patched_test": {
+    "description": "Runner modified tests instead of product code.",
+    "signals": [
+      "tests/ modified"
+    ]
+  },
+  "over_broad_refactor": {
+    "description": "Runner changed more files than needed.",
+    "signals": [
+      "patch_size_lines much larger than ideal"
+    ]
+  },
+  "parent_deny_not_overridden": {
+    "description": "Resolver treats any parent deny as final and fails to allow access when a child explicitly allows it.",
+    "signals": [
+      "child allow after parent deny still returns False"
+    ]
+  },
+  "missing_levels_reset_state": {
+    "description": "Resolver incorrectly resets or changes the current permission when an intermediate level has no explicit allow value.",
+    "signals": [
+      "chains with metadata-only intermediate levels resolve incorrectly"
+    ]
+  },
+  "hardcoded_visible_case": {
+    "description": "Patch only handles the exact visible parent-allow child-deny chain instead of implementing nearest-explicit-wins semantics.",
+    "signals": [
+      "visible tests pass but hidden multi-level chains fail"
+    ]
+  }
+}

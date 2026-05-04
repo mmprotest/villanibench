@@ -1,0 +1,12 @@
+{
+  "expected_files": [
+    "src/router/match.py"
+  ],
+  "strongly_expected_files": [
+    "src/router/match.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/router/table.py"
+  ]
+}

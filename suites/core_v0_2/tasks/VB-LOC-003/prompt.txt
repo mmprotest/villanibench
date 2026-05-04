@@ -1,0 +1,1 @@
+Daily reports group late-night events under the wrong day for the account timezone. Fix the bug.

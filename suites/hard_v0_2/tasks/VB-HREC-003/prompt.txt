@@ -1,0 +1,1 @@
+Serialized payloads have inconsistent IDs. The serializer looks suspicious, but the bug is in ID normalisation.

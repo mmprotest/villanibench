@@ -1,0 +1,3 @@
+The `/users/health` route is currently being handled by the parameterized `/users/<id>` route because matching stops at the first prefix match.
+
+Fix `match_route` so exact/static routes are preferred before parameter routes, without changing the route table or tests. Regular user-id routes such as `/users/123` should still resolve to the user detail handler.

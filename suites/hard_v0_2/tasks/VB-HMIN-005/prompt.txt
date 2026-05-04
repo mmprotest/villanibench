@@ -1,0 +1,1 @@
+Generated slugs use the wrong default separator. Fix the source of truth.

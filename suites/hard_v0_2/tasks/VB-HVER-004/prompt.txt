@@ -1,0 +1,3 @@
+The retry policy stopped retrying transient provider-prefixed errors after a dependency upgrade.
+
+Update the retry decision so it treats both plain transient codes and provider-prefixed transient codes as retryable, for example `timeout` and `stripe.timeout`. Do not retry permanent validation/permission/not-found errors, including when they are provider-prefixed. Unknown codes should not be retried. Preserve the attempt limit behavior.

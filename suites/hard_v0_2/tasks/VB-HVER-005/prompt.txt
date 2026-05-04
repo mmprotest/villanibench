@@ -1,0 +1,1 @@
+The config migration treats explicit false values as missing and overwrites them. Fix the migration without changing real missing defaults.

@@ -1,0 +1,20 @@
+{
+  "patched_test": {
+    "description": "Runner modified tests instead of product code.",
+    "signals": [
+      "tests/ modified"
+    ]
+  },
+  "over_broad_refactor": {
+    "description": "Runner changed more files than needed.",
+    "signals": [
+      "patch_size_lines much larger than ideal"
+    ]
+  },
+  "edited_decoy_file": {
+    "description": "Runner edited a plausible but incorrect decoy file.",
+    "signals": [
+      "src/auth/legacy_session.py"
+    ]
+  }
+}

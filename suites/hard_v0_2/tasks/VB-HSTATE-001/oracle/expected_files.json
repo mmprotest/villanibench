@@ -1,0 +1,16 @@
+{
+  "expected_files": [
+    "src/vb_hstate_001/csv_export.py",
+    "src/vb_hstate_001/pdf_export.py",
+    "src/vb_hstate_001/email_preview.py"
+  ],
+  "strongly_expected_files": [
+    "src/vb_hstate_001/csv_export.py",
+    "src/vb_hstate_001/pdf_export.py",
+    "src/vb_hstate_001/email_preview.py"
+  ],
+  "acceptable_extra_files": [],
+  "decoy_files": [
+    "src/vb_hstate_001/legacy_metrics.py"
+  ]
+}

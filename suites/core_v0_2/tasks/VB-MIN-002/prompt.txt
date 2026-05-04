@@ -1,0 +1,9 @@
+The app is ignoring the documented precedence for its timeout setting.
+
+Fix `resolve_timeout` so the source of truth is:
+
+1. an explicit `explicit_timeout` argument, when provided
+2. the `APP_TIMEOUT` environment variable, when no explicit timeout is provided
+3. `DEFAULT_TIMEOUT`, when neither is provided
+
+`APP_TIMEOUT` should be parsed as an integer. Make the minimal source change needed; do not edit the tests.

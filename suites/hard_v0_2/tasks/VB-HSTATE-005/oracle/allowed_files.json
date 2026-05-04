@@ -1,0 +1,9 @@
+{
+  "allowed_code_files": [
+    "src/vb_hstate_005/shared.py"
+  ],
+  "forbidden_files": [],
+  "forbidden_patterns": [
+    "tests/"
+  ]
+}

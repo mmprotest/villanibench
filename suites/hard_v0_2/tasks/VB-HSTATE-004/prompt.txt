@@ -1,0 +1,3 @@
+The CSV export, PDF export, and email preview each compute effective team permissions differently.
+
+Use the shared permission definition consistently across those consumers: only records whose `kind` is exactly `grant` should be counted. Do not count `deny`, other kinds, missing kinds, or truthy non-grant values.
