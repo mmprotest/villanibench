@@ -10,3 +10,8 @@ def test_adapter_construction_and_defaults():
     assert build_adapter("villani").default_template == VILLANI_DEFAULT
     assert build_adapter("react").name == "minimal_react_control"
     assert build_adapter("pi").name == "pi"
+
+
+
+def test_qwen_cli_adapter_construction():
+    assert build_adapter("qwen-cli").name == "qwen-cli"
