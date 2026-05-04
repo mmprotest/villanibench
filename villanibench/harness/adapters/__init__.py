@@ -2,6 +2,7 @@ from .base import RunnerAdapter
 from .claude_code import ClaudeCodeAdapter
 from .minimal_react_control import MinimalReactControlAdapter
 from .opencode import OpenCodeAdapter
+from .pi import PiAdapter
 from .villani import VillaniAdapter
 
 
@@ -15,4 +16,6 @@ def build_adapter(name: str) -> RunnerAdapter:
         return OpenCodeAdapter()
     if normalized == "claude_code":
         return ClaudeCodeAdapter()
+    if normalized == "pi":
+        return PiAdapter()
     raise ValueError(f"Unknown runner: {name}")
