@@ -1,3 +1,4 @@
+from .aider import AiderAdapter
 from .base import RunnerAdapter
 from .claude_code import ClaudeCodeAdapter
 from .minimal_react_control import MinimalReactControlAdapter
@@ -19,6 +20,8 @@ def build_adapter(name: str) -> RunnerAdapter:
         return ClaudeCodeAdapter()
     if normalized == "pi":
         return PiAdapter()
+    if normalized == "aider":
+        return AiderAdapter()
     if normalized == "qwen-cli":
         return QwenCliAdapter()
     raise ValueError(f"Unknown runner: {name}")

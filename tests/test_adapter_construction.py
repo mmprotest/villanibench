@@ -10,6 +10,7 @@ def test_adapter_construction_and_defaults():
     assert build_adapter("villani").default_template == VILLANI_DEFAULT
     assert build_adapter("react").name == "minimal_react_control"
     assert build_adapter("pi").name == "pi"
+    assert build_adapter("aider").name == "aider"
 
 
 

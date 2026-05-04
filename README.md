@@ -99,6 +99,27 @@ Notes for external CLI adapters:
 > **Shell-template warning:** External command templates use shell execution. Prompts containing double quotes may require a custom template; built-in task prompts should avoid double quotes until argv-based adapters are available.
 
 
+
+### Aider adapter (`aider`)
+
+Run with the Aider adapter:
+
+```bash
+villanibench run \
+  --suite suites/core_v0_1 \
+  --runner aider \
+  --provider openai \
+  --model qwen3.5-coder \
+  --base-url http://127.0.0.1:1234/v1 \
+  --api-key dummy \
+  --output-dir artifacts/aider_run
+```
+
+Notes:
+- Raw model names are automatically normalized to `openai/<model>` for Aider.
+- Adapter runs Aider in one-shot mode via `--message-file` and disables auto/dirt commits.
+- The benchmark harness evaluates repository diffs directly; it does not parse Aider stdout as patch truth.
+
 ### Qwen Code CLI adapter (`qwen-cli`)
 
 Install Qwen Code CLI:
