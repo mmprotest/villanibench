@@ -1,4 +1,4 @@
-DEFAULT_SORT_ORDER = "descending"
+DEFAULT_SORT_ORDER = "ascending"
 
 
 def sort_values(values: list[int], sort_order: str | None = None) -> list[int]:
