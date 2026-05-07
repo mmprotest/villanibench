@@ -9,6 +9,7 @@ from pathlib import Path
 from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
+from villanibench.harness.docker import build_docker_argv, docker_env_from_config, ensure_docker_available
 from villanibench.harness.notes import append_note
 from villanibench.harness.process import run_command_tree
 from villanibench.harness.result_schema import TaskResult
@@ -37,8 +38,23 @@ def resolve_test_command_timeout_sec(budget_wall_time_sec: float, remaining_wall
     return timeout_sec
 
 
-def run_cmd(command: str, cwd: Path, timeout_sec: float) -> CommandResult:
-    proc = run_command_tree(command, cwd, timeout_sec)
+def run_cmd(command: str, cwd: Path, timeout_sec: float, config: dict | None = None) -> CommandResult:
+    cfg = config or {}
+    if cfg.get("docker"):
+        image = str(cfg.get("docker_image") or "").strip()
+        if not image:
+            raise RuntimeError("Docker mode requires --docker-image.")
+        docker_argv = build_docker_argv(
+            image=image,
+            host_workspace_dir=cwd,
+            command_argv=["sh", "-lc", command],
+            network=str(cfg.get("docker_network") or "none"),
+            read_only_rootfs=not bool(cfg.get("docker_disable_read_only_rootfs")),
+            env=docker_env_from_config(cfg),
+        )
+        proc = run_command_tree(" ".join(docker_argv), cwd, timeout_sec)
+    else:
+        proc = run_command_tree(command, cwd, timeout_sec)
     return CommandResult(proc.exit_code, proc.stdout, proc.stderr, proc.timed_out, proc.wall_time_sec)
 
 
@@ -71,6 +87,8 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             f"--output-dir must not be inside the benchmark suite directory. output_dir={output_dir}, suite_dir={suite_dir}"
         )
     suite_hash_before = hash_tree(suite_dir)
+    if config.get("docker"):
+        ensure_docker_available()
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
     adapter = build_adapter(runner)
@@ -106,7 +124,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             sandbox, _repo = prepare_sandbox(task, task_output)
             assert_tree_unchanged(suite_dir, suite_hash_before)
             test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
-            pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec, config=config)
             _log(
                 f"[task {task_index}/{len(tasks)}] preflight visible exit_code={pre_visible.exit_code} timed_out={pre_visible.timed_out} elapsed={pre_visible.wall_time_sec:.2f}s"
             )
@@ -179,7 +197,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.decoy_file_touched = diff_stats.decoy_file_touched
             assert_tree_unchanged(suite_dir, suite_hash_before)
 
-            post_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
+            post_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec, config=config)
             _log(
                 f"[task {task_index}/{len(tasks)}] post visible exit_code={post_visible.exit_code} timed_out={post_visible.timed_out} elapsed={post_visible.wall_time_sec:.2f}s"
             )
@@ -196,7 +214,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 else:
                     assert_tree_unchanged(suite_dir, suite_hash_before)
                     copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
-                    post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
+                    post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec, config=config)
                     _log(
                         f"[task {task_index}/{len(tasks)}] post hidden exit_code={post_hidden.exit_code} timed_out={post_hidden.timed_out} elapsed={post_hidden.wall_time_sec:.2f}s"
                     )

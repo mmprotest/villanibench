@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from villanibench.tasks.schema import TaskSpec
+
+TRANSIENT_DIRS = {".pytest_cache", "__pycache__", ".villani", ".villani_code", "results", "artifacts"}
+
+
+@dataclass
+class Sandbox:
+    task_id: str
+    original_task_dir: Path
+    host_workspace_dir: Path
+    container_workspace_dir: str = "/workspace"
+    suite_hash_before: str | None = None
+    suite_hash_after: str | None = None
 
 
 def assert_under(path: Path, root: Path) -> Path:
@@ -60,6 +73,27 @@ def _assert_no_symlinks(root: Path) -> None:
             raise RuntimeError(f"Refusing symlink inside benchmark sandbox: {p}")
 
 
+def _safe_copytree(src: Path, dst: Path, root_dst: Path) -> None:
+    if src.is_symlink():
+        raise RuntimeError(f"Refusing symlink source entry: {src}")
+    dst_resolved = dst.resolve()
+    root_resolved = root_dst.resolve()
+    if dst_resolved != root_resolved and root_resolved not in dst_resolved.parents:
+        raise RuntimeError(f"Destination escapes workspace: {dst}")
+    if src.is_dir():
+        dst.mkdir(parents=True, exist_ok=True)
+        for child in src.iterdir():
+            if child.name in TRANSIENT_DIRS:
+                continue
+            _safe_copytree(child, dst / child.name, root_dst)
+        return
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst, follow_symlinks=False)
+        return
+    raise RuntimeError(f"Unsupported filesystem entry in task fixture: {src}")
+
+
 def copy_visible_tests_to_sandbox(task: TaskSpec, sandbox_dir: Path) -> Path:
     task_root = task.task_dir.resolve()
     tests_visible_src = assert_under(task_root / "tests" / "visible", task_root)
@@ -93,7 +127,7 @@ def prepare_sandbox(task: TaskSpec, task_output_dir: Path) -> tuple[Path, Path]:
     if sandbox.exists():
         shutil.rmtree(sandbox)
     repo_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(repo_src, repo_dst)
+    _safe_copytree(repo_src, repo_dst, sandbox)
     copy_visible_tests_to_sandbox(task, sandbox)
     shutil.copy2(prompt_src, assert_under(sandbox / "prompt.txt", sandbox))
     _assert_no_symlinks(sandbox)

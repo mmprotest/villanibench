@@ -40,6 +40,11 @@ def main(argv: list[str] | None = None) -> None:
     run_p.add_argument("--api-key")
     run_p.add_argument("--output-dir", required=True)
     _add_common_runner_args(run_p)
+    run_p.add_argument("--docker", action="store_true")
+    run_p.add_argument("--docker-image")
+    run_p.add_argument("--docker-network", default="none")
+    run_p.add_argument("--docker-disable-read-only-rootfs", action="store_true")
+    run_p.add_argument("--docker-keep-workspace", action="store_true")
 
     cmp_p = sub.add_parser("compare")
     cmp_p.add_argument("--runs", nargs="+", required=True)
@@ -120,6 +125,11 @@ def main(argv: list[str] | None = None) -> None:
             "api_key": args.api_key or "dummy",
             "command_template": _resolve_command_template(args),
             "log_progress": True,
+            "docker": args.docker,
+            "docker_image": args.docker_image,
+            "docker_network": args.docker_network,
+            "docker_disable_read_only_rootfs": args.docker_disable_read_only_rootfs,
+            "docker_keep_workspace": args.docker_keep_workspace,
         }
         summary = run_suite(Path(args.suite), args.runner, args.model, Path(args.output_dir), cfg)
         print(json.dumps(summary, indent=2))
