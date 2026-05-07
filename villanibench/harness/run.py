@@ -12,7 +12,12 @@ from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.notes import append_note
 from villanibench.harness.process import run_command_tree
 from villanibench.harness.result_schema import TaskResult
-from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
+from villanibench.harness.sandbox import (
+    assert_tree_unchanged,
+    copy_hidden_tests_to_sandbox_for_evaluation,
+    hash_tree,
+    prepare_sandbox,
+)
 from villanibench.tasks.loader import load_suite
 
 
@@ -59,6 +64,13 @@ def classify_status(result: TaskResult) -> str:
 
 def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config: dict) -> dict:
     suite, tasks = load_suite(suite_dir)
+    suite_dir = suite_dir.resolve()
+    output_dir = output_dir.resolve()
+    if output_dir == suite_dir or suite_dir in output_dir.parents:
+        raise RuntimeError(
+            f"--output-dir must not be inside the benchmark suite directory. output_dir={output_dir}, suite_dir={suite_dir}"
+        )
+    suite_hash_before = hash_tree(suite_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
     adapter = build_adapter(runner)
@@ -92,6 +104,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         )
         try:
             sandbox, _repo = prepare_sandbox(task, task_output)
+            assert_tree_unchanged(suite_dir, suite_hash_before)
             test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
             pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
             _log(
@@ -124,6 +137,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             }
             _log(f"[task {task_index}/{len(tasks)}] runner start budget_profile={resolved_budget_profile_id}")
             adapter.prepare(task, sandbox, adapter_cfg)
+            assert_tree_unchanged(suite_dir, suite_hash_before)
             run_exc: Exception | None = None
             try:
                 run_res = adapter.run(task, sandbox, budget, adapter_cfg)
@@ -163,6 +177,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             result.forbidden_file_modified = diff_stats.forbidden_file_modified
             result.expected_file_touched = diff_stats.expected_file_touched
             result.decoy_file_touched = diff_stats.decoy_file_touched
+            assert_tree_unchanged(suite_dir, suite_hash_before)
 
             post_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
             _log(
@@ -179,6 +194,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                     note = "Runner created tests/hidden before evaluator copied hidden tests."
                     result.notes = append_note(result.notes, note)
                 else:
+                    assert_tree_unchanged(suite_dir, suite_hash_before)
                     copy_hidden_tests_to_sandbox_for_evaluation(task, sandbox)
                     post_hidden = run_cmd(task.hidden_test_command, sandbox, timeout_sec=test_timeout_sec)
                     _log(
@@ -206,6 +222,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             if result.runner_crashed and result.status == "success":
                 note = "Runner exited non-zero but final state passed visible and hidden tests."
                 result.notes = append_note(result.notes, note)
+            assert_tree_unchanged(suite_dir, suite_hash_before)
         except Exception as exc:
             message = str(exc)
             if "Runner created tests/hidden before evaluator copied hidden tests." in message:
@@ -236,5 +253,6 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         },
     }
     (output_dir / "run_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    assert_tree_unchanged(suite_dir, suite_hash_before)
     _log(f"[run] done run_id={run_id} statuses={summary['statuses']}")
     return summary
