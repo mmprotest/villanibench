@@ -104,12 +104,8 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
     suite_hash_before = hash_tree(suite_dir)
     if config.get("docker"):
         ensure_docker_available()
-        if Path("/.dockerenv").exists() and not Path("/var/run/docker.sock").exists():
-            print(
-                "[warn] --docker was requested inside a container, but /var/run/docker.sock is not mounted. "
-                "Nested Docker isolation will fail unless Docker socket access is explicitly provided.",
-                flush=True,
-            )
+        if (config.get("enable_nested_docker") or __import__("os").environ.get("VILLANIBENCH_ENABLE_NESTED_DOCKER")) and Path("/.dockerenv").exists() and not Path("/var/run/docker.sock").exists():
+            raise RuntimeError("Nested Docker isolation was requested, but /var/run/docker.sock is missing.")
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
     adapter = build_adapter(runner)
@@ -128,6 +124,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         _log(f"[task {task_index}/{len(tasks)}] start task_id={task.id}")
         task_output = output_dir / "tasks" / task.id
         task_output.mkdir(parents=True, exist_ok=True)
+        (task_output / "agent_artifacts").mkdir(parents=True, exist_ok=True)
         resolved_budget_profile_id = task.budget_profile or suite.budget_profile
         if not resolved_budget_profile_id:
             raise RuntimeError(f"No budget profile configured for task {task.id} or suite {suite.id}")
@@ -142,7 +139,14 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             category=task.category,
         )
         try:
-            sandbox, _repo = prepare_sandbox(task, task_output)
+            sandbox_base = Path(__import__("os").environ.get("VILLANIBENCH_CONTAINER_SANDBOX_ROOT", ""))
+            if config.get("enable_nested_docker") or __import__("os").environ.get("VILLANIBENCH_ENABLE_NESTED_DOCKER"):
+                if not sandbox_base:
+                    raise RuntimeError("Nested Docker isolation was requested, but the sandbox host path could not be resolved. Refusing to run agent locally because that would break isolation.")
+                task_sandbox_output = sandbox_base / run_id / task.id
+            else:
+                task_sandbox_output = task_output
+            sandbox, _repo = prepare_sandbox(task, task_sandbox_output)
             assert_tree_unchanged(suite_dir, suite_hash_before)
             test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
             pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec, config=config)
