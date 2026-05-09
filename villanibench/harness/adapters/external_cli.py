@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -50,6 +52,34 @@ class ExternalCliAdapter(RunnerAdapter):
             output_dir=str(output_dir.resolve()),
             visible_test_command=str(task.visible_test_command),
         )
+        try:
+            parts = shlex.split(command, posix=True)
+        except ValueError:
+            parts = []
+        if parts:
+            exe = parts[0]
+            if not Path(exe).is_file() and shutil.which(exe) is None:
+                msg = (
+                    f"Runner '{self.name}' requires `{exe}` on PATH inside the current runtime. "
+                    "Install it in the host/container image or override the command template."
+                )
+                stderr_path.write_text(msg + "\n", encoding="utf-8")
+                stdout_path.write_text("", encoding="utf-8")
+                now = now_iso()
+                return AdapterRunResult(
+                    exit_code=127,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                    started_at=now,
+                    ended_at=now,
+                    timed_out=False,
+                    runner_crashed=True,
+                    raw_command=command,
+                    comparison_mode=comparison_mode,
+                    control_kind=None,
+                    setting_warnings=warnings,
+                    notes=msg,
+                )
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"

@@ -14,6 +14,16 @@ This repository is separate from Villani Code. Villani, OpenCode, and Claude Cod
 
 ## Quick start
 
+## Docker
+
+For a single-command all-in-one Docker workflow (build image + run benchmark inside container), use:
+
+- `./scripts/villanibench-docker ...` (Unix)
+- `./scripts/villanibench-docker.ps1 ...` (PowerShell)
+
+See `docs/docker.md` for usage and limitations.
+
+
 ```bash
 villanibench validate-suite suites/core_v0_1
 ```

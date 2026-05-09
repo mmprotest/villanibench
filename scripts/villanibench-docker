@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+IMAGE="villanibench:local"
+REBUILD=0
+NO_CACHE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rebuild) REBUILD=1; shift ;;
+    --no-cache) NO_CACHE=1; shift ;;
+    --image) IMAGE="$2"; shift 2 ;;
+    --) shift; break ;;
+    *) break ;;
+  esac
+done
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $0 [--rebuild] [--no-cache] [--image name] <villanibench args...>" >&2
+  exit 1
+fi
+
+if [[ $REBUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  BUILD_ARGS=()
+  [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache)
+  docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$REPO_ROOT"
+fi
+
+DOCKER_ARGS=(run --rm -v "$REPO_ROOT:/work" -w /work)
+if docker run --help | grep -q host-gateway; then
+  DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
+fi
+for var in OPENAI_API_KEY ANTHROPIC_API_KEY API_KEY BASE_URL; do
+  [[ -n "${!var:-}" ]] && DOCKER_ARGS+=(-e "$var=${!var}")
+done
+
+exec docker "${DOCKER_ARGS[@]}" "$IMAGE" "$@"
