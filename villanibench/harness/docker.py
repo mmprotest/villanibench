@@ -55,3 +55,15 @@ def docker_env_from_config(config: dict) -> dict[str, str]:
         if value:
             out[key.upper()] = str(value)
     return out
+
+
+def build_nested_agent_docker_argv(*, image: str, host_workspace_dir: Path, host_artifact_dir: Path, command_argv: list[str], env: dict[str, str] | None = None, network: str = "bridge") -> list[str]:
+    argv = ["docker", "run", "--rm", "--read-only", "--network", network,
+            "--mount", f"type=bind,src={host_workspace_dir.resolve()},dst=/workspace,rw",
+            "--mount", f"type=bind,src={host_artifact_dir.resolve()},dst=/artifacts,rw",
+            "--mount", "type=tmpfs,dst=/tmp", "--mount", "type=tmpfs,dst=/var/tmp", "-w", "/workspace"]
+    for k, v in (env or {}).items():
+        argv.extend(["-e", f"{k}={v}"])
+    argv.append(image)
+    argv.extend(command_argv)
+    return argv

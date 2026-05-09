@@ -18,17 +18,17 @@ def test_wrappers_exist():
 
 def test_unix_wrapper_mounts_only_repo_root_and_forwards_args():
     text = Path("scripts/villanibench-docker").read_text(encoding="utf-8")
-    assert '"$REPO_ROOT:/work"' in text
+    assert 'dst=/work' in text
     assert 'exec docker "${DOCKER_ARGS[@]}" "$IMAGE" "$@"' in text
-    assert '/var/run/docker.sock' not in text
+    assert '--enable-nested-docker' in text
     assert '$HOME' not in text
 
 
 def test_powershell_wrapper_mounts_only_repo_root_and_forwards_args():
     text = Path("scripts/villanibench-docker.ps1").read_text(encoding="utf-8")
-    assert ':/work' in text
+    assert 'dst=/work' in text
     assert '$dockerArgs += $BenchArgs' in text
-    assert '/var/run/docker.sock' not in text
+    assert '--enable-nested-docker' in text
 
 
 def test_run_py_uses_argv_for_docker_execution():

@@ -154,3 +154,6 @@ Notes:
 - Adapter writes project-local `.qwen/settings.json` inside each task repository sandbox.
 - Adapter does not rely on global `~/.qwen/settings.json`.
 - Model string must match your backend-served model id exactly.
+
+
+See `docs/docker.md` for convenience and nested isolation Docker commands.

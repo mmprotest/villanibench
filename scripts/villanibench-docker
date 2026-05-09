@@ -1,39 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE="villanibench:local"
 REBUILD=0
 NO_CACHE=0
-
+ENABLE_NESTED_DOCKER=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -Rebuild|--rebuild) REBUILD=1; shift ;;
     -NoCache|--no-cache) NO_CACHE=1; shift ;;
+    --enable-nested-docker) ENABLE_NESTED_DOCKER=1; shift ;;
     -Image|--image) IMAGE="$2"; shift 2 ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
-
-if [[ $# -eq 0 ]]; then
-  echo "Usage: $0 [--rebuild] [--no-cache] [--image name] <villanibench args...>" >&2
-  exit 1
-fi
-
+[[ $# -gt 0 ]] || { echo "Usage: $0 [--rebuild] [--no-cache] [--image name] [--enable-nested-docker] <villanibench args...>" >&2; exit 1; }
 if [[ $REBUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  BUILD_ARGS=()
-  [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache)
-  docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$REPO_ROOT"
+  BUILD_ARGS=(); [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache); docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$REPO_ROOT"
 fi
-
-DOCKER_ARGS=(run --rm -v "$REPO_ROOT:/work" -w /work)
-if docker run --help | grep -q host-gateway; then
-  DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
+SANDBOX_ROOT="$REPO_ROOT/.villanibench_sandboxes"; mkdir -p "$SANDBOX_ROOT"
+DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work,rw" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes,rw" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes")
+if [[ $ENABLE_NESTED_DOCKER -eq 1 ]]; then
+  DOCKER_ARGS+=(--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock -e VILLANIBENCH_ENABLE_NESTED_DOCKER=1)
 fi
-for var in OPENAI_API_KEY ANTHROPIC_API_KEY API_KEY BASE_URL; do
-  [[ -n "${!var:-}" ]] && DOCKER_ARGS+=(-e "$var=${!var}")
-done
-
+if docker run --help | grep -q host-gateway; then DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway); fi
+for var in OPENAI_API_KEY ANTHROPIC_API_KEY API_KEY BASE_URL; do [[ -n "${!var:-}" ]] && DOCKER_ARGS+=(-e "$var=${!var}"); done
 exec docker "${DOCKER_ARGS[@]}" "$IMAGE" "$@"
