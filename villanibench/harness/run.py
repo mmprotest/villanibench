@@ -11,7 +11,7 @@ from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.docker import build_docker_argv, docker_env_from_config, ensure_docker_available
 from villanibench.harness.notes import append_note
-from villanibench.harness.process import run_command_tree
+from villanibench.harness.process import run_command_tree, run_command_tree_argv
 from villanibench.harness.result_schema import TaskResult
 from villanibench.harness.sandbox import (
     assert_tree_unchanged,
@@ -52,7 +52,7 @@ def run_cmd(command: str, cwd: Path, timeout_sec: float, config: dict | None = N
             read_only_rootfs=not bool(cfg.get("docker_disable_read_only_rootfs")),
             env=docker_env_from_config(cfg),
         )
-        proc = run_command_tree(" ".join(docker_argv), cwd, timeout_sec)
+        proc = run_command_tree_argv(docker_argv, cwd, timeout_sec)
     else:
         proc = run_command_tree(command, cwd, timeout_sec)
     return CommandResult(proc.exit_code, proc.stdout, proc.stderr, proc.timed_out, proc.wall_time_sec)
@@ -89,6 +89,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
     suite_hash_before = hash_tree(suite_dir)
     if config.get("docker"):
         ensure_docker_available()
+        if Path("/.dockerenv").exists() and not Path("/var/run/docker.sock").exists():
+            print(
+                "[warn] --docker was requested inside a container, but /var/run/docker.sock is not mounted. "
+                "Nested Docker isolation will fail unless Docker socket access is explicitly provided.",
+                flush=True,
+            )
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
     adapter = build_adapter(runner)

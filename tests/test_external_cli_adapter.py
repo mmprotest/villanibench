@@ -38,6 +38,8 @@ def test_missing_cli_is_runner_crash(tmp_path: Path):
     adapter = ExternalCliAdapter("fake", "definitely_missing_command_zz")
     res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {"task_output_dir": str(out), "model": "m"})
     assert res.runner_crashed is True
+    assert res.notes is not None
+    assert "requires `definitely_missing_command_zz` on PATH" in res.notes
 
 
 def test_timeout_reported(tmp_path: Path):
