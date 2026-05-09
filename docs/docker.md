@@ -1,56 +1,30 @@
 # Docker workflow
 
-VillaniBench supports an all-in-one Docker workflow: Docker on the host, benchmark execution inside container.
+- **Convenience mode**: harness and agent run in one container (reproducible, not hard isolation).
+- **Nested isolation mode**: add `--enable-nested-docker` / `-EnableNestedDocker` to run each agent step in a fresh per-task container.
 
-## Build image
-
-```bash
-./scripts/villanibench-docker --rebuild validate-suite suites/core_v0_1
-```
-
-## Run benchmark
-
-```bash
-./scripts/villanibench-docker run \
-  --suite suites/core_v0_1 \
-  --runner minimal_react_control \
-  --model qwen3.6-9b \
-  --base-url http://host.docker.internal:1234 \
-  --api-key dummy \
-  --output-dir artifacts/runs/control_qwen9b
-```
-
-## Compare runs
-
-```bash
-./scripts/villanibench-docker compare \
-  --runs artifacts/runs/control_qwen9b artifacts/runs/villani_qwen9b \
-  --output-dir artifacts/comparisons/qwen9b
-```
-
-## Windows PowerShell
-
+PowerShell convenience:
 ```powershell
-./scripts/villanibench-docker.ps1 run `
-  --suite suites/core_v0_1 `
+.\scripts\villanibench-docker.ps1 -Rebuild run `
+  --suite suites/core_v0_2 `
   --runner minimal_react_control `
-  --model qwen3.6-9b `
-  --base-url http://host.docker.internal:1234 `
+  --model "qwen3.6-35b" `
+  --base-url "http://host.docker.internal:1234" `
   --api-key dummy `
-  --output-dir artifacts/runs/control_qwen9b
+  --output-dir artifacts/runs/control
 ```
 
-## Host model servers
+PowerShell nested isolation:
+```powershell
+.\scripts\villanibench-docker.ps1 -Rebuild -EnableNestedDocker run `
+  --suite suites/core_v0_2 `
+  --runner villani `
+  --model "villanis/models/qwen3.6-35b-a3b-ud-iq4_xs.gguf" `
+  --base-url "http://host.docker.internal:1234" `
+  --api-key dummy `
+  --output-dir artifacts/runs/villani_35b_core_v0_2_local
+```
 
-Use `host.docker.internal` to reach a model server running on the host from inside container. On Linux, wrapper scripts add `--add-host=host.docker.internal:host-gateway` when supported.
+`host.docker.internal` reaches host LM Studio from containers. On Linux, wrappers add `--add-host host.docker.internal:host-gateway` when supported.
 
-## Artifacts
-
-Artifacts are written under the mounted repo (for example `artifacts/runs/...`) and persist on host.
-
-## Notes and limitations
-
-- Inner per-task sandbox isolation is still enforced; runners only receive sandbox repo paths.
-- `--docker` on `villanibench run` is nested Docker mode. It is usually unnecessary with outer wrapper scripts.
-- If nested Docker is requested inside the image without `/var/run/docker.sock`, VillaniBench prints a warning and nested mode will fail.
-- The base image includes Python, pytest, git, and VillaniBench. External runner CLIs (Villani Code / Claude Code / OpenCode / Aider / Qwen CLI) must be present on PATH in the runtime image to use those adapters.
+The Villani runner requires `villani-code` in the image PATH. Build with `--build-arg VILLANI_CODE_INSTALL_SPEC=<npm-spec>` to install it.

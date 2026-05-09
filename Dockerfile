@@ -1,14 +1,8 @@
 FROM python:3.11-slim
 
-ARG INSTALL_VILLANI_CODE=false
+ARG VILLANI_CODE_INSTALL_SPEC=""
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        bash \
-        ca-certificates \
-        curl \
-        git \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update     && apt-get install -y --no-install-recommends         bash         ca-certificates         curl         git         nodejs         npm     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
 ENV PYTHONUNBUFFERED=1
@@ -23,11 +17,6 @@ COPY tests ./tests
 
 RUN pip install --no-cache-dir -e ".[dev]"
 
-# Optional: install Villani Code if a public package exists in your environment.
-# If unavailable, leave INSTALL_VILLANI_CODE=false and extend this image yourself.
-RUN if [ "$INSTALL_VILLANI_CODE" = "true" ]; then \
-      echo "INSTALL_VILLANI_CODE=true requested. Install step must be customized for your environment." >&2; \
-      exit 1; \
-    fi
+RUN if [ -n "$VILLANI_CODE_INSTALL_SPEC" ]; then       npm install -g "$VILLANI_CODE_INSTALL_SPEC" && villani-code --help >/dev/null;     fi
 
 ENTRYPOINT ["villanibench"]

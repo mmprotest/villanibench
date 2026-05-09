@@ -9,7 +9,7 @@ from pathlib import Path
 from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
-from villanibench.harness.docker import build_docker_argv, docker_env_from_config, ensure_docker_available
+from villanibench.harness.docker import build_docker_argv, build_nested_agent_docker_argv, docker_env_from_config, ensure_docker_available
 from villanibench.harness.notes import append_note
 from villanibench.harness.process import run_command_tree, run_command_tree_argv
 from villanibench.harness.result_schema import TaskResult
@@ -57,6 +57,21 @@ def run_cmd(command: str, cwd: Path, timeout_sec: float, config: dict | None = N
         proc = run_command_tree(command, cwd, timeout_sec)
     return CommandResult(proc.exit_code, proc.stdout, proc.stderr, proc.timed_out, proc.wall_time_sec)
 
+
+
+
+def _map_container_to_host_path(path: Path) -> str | None:
+    host_root = Path(str(Path.cwd())) if False else None
+    host_root_env = Path(str(__import__('os').environ.get("VILLANIBENCH_HOST_SANDBOX_ROOT", ""))) if __import__('os').environ.get("VILLANIBENCH_HOST_SANDBOX_ROOT") else None
+    container_root_env = Path(str(__import__('os').environ.get("VILLANIBENCH_CONTAINER_SANDBOX_ROOT", ""))) if __import__('os').environ.get("VILLANIBENCH_CONTAINER_SANDBOX_ROOT") else None
+    if not host_root_env or not container_root_env:
+        return None
+    rp = path.resolve()
+    try:
+        rel = rp.relative_to(container_root_env)
+    except Exception:
+        return None
+    return str((host_root_env / rel).resolve())
 
 def classify_status(result: TaskResult) -> str:
     if result.timed_out:
@@ -158,6 +173,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 **config,
                 "model": model,
                 "task_output_dir": str(task_output),
+                "agent_workspace_container": "/workspace",
+                "agent_artifacts_container": "/artifacts",
+                "nested_docker_enabled": bool(config.get("enable_nested_docker") or __import__("os").environ.get("VILLANIBENCH_ENABLE_NESTED_DOCKER")),
+                "nested_docker_image": str(config.get("docker_image") or "villanibench:local"),
+                "sandbox_repo_host_path": _map_container_to_host_path(sandbox / "repo"),
+                "task_output_host_path": _map_container_to_host_path(task_output),
             }
             _log(f"[task {task_index}/{len(tasks)}] runner start budget_profile={resolved_budget_profile_id}")
             adapter.prepare(task, sandbox, adapter_cfg)

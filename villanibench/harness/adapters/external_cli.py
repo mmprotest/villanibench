@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-import subprocess
 from pathlib import Path
 
-from villanibench.harness.process import run_command_tree
+from villanibench.harness.docker import build_nested_agent_docker_argv
+from villanibench.harness.process import run_command_tree, run_command_tree_argv
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
 
@@ -63,22 +63,18 @@ class ExternalCliAdapter(RunnerAdapter):
                     f"Runner '{self.name}' requires `{exe}` on PATH inside the current runtime. "
                     "Install it in the host/container image or override the command template."
                 )
+                if self.name == "villani":
+                    msg = (
+                        "Runner 'villani' requires villani-code on PATH inside the Docker image. "
+                        "Build an image that includes Villani Code, or pass -Image <image> containing it."
+                    )
                 stderr_path.write_text(msg + "\n", encoding="utf-8")
                 stdout_path.write_text("", encoding="utf-8")
                 now = now_iso()
                 return AdapterRunResult(
-                    exit_code=127,
-                    stdout_path=stdout_path,
-                    stderr_path=stderr_path,
-                    started_at=now,
-                    ended_at=now,
-                    timed_out=False,
-                    runner_crashed=True,
-                    raw_command=command,
-                    comparison_mode=comparison_mode,
-                    control_kind=None,
-                    setting_warnings=warnings,
-                    notes=msg,
+                    exit_code=127, stdout_path=stdout_path, stderr_path=stderr_path, started_at=now, ended_at=now,
+                    timed_out=False, runner_crashed=True, raw_command=command, comparison_mode=comparison_mode,
+                    control_kind=None, setting_warnings=warnings, notes=msg,
                 )
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -90,7 +86,18 @@ class ExternalCliAdapter(RunnerAdapter):
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
-                completed = run_command_tree(command, cwd, budget.wall_time_sec, env=env)
+                if config.get("nested_docker_enabled") and config.get("sandbox_repo_host_path") and config.get("task_output_host_path"):
+                    rendered = command.replace(str(cwd), "/workspace").replace(str(output_dir.resolve()), "/artifacts")
+                    nested = build_nested_agent_docker_argv(
+                        image=str(config.get("nested_docker_image") or "villanibench:local"),
+                        host_workspace_dir=Path(str(config["sandbox_repo_host_path"])),
+                        host_artifact_dir=Path(str(config["task_output_host_path"])),
+                        command_argv=["sh", "-lc", rendered],
+                        env={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+                    )
+                    completed = run_command_tree_argv(nested, cwd, budget.wall_time_sec, env=env)
+                else:
+                    completed = run_command_tree(command, cwd, budget.wall_time_sec, env=env)
                 out.write(completed.stdout)
                 err.write(completed.stderr)
                 timed_out = completed.timed_out
@@ -100,6 +107,7 @@ class ExternalCliAdapter(RunnerAdapter):
                 err.write(f"Adapter execution error: {exc}\n")
                 runner_crashed = True
                 exit_code = 1
+
         cli_error_patterns = (
             "No such option",
             "unrecognized arguments",
@@ -117,16 +125,7 @@ class ExternalCliAdapter(RunnerAdapter):
 
         ended = now_iso()
         return AdapterRunResult(
-            exit_code=exit_code,
-            stdout_path=stdout_path,
-            stderr_path=stderr_path,
-            started_at=started,
-            ended_at=ended,
-            timed_out=timed_out,
-            runner_crashed=runner_crashed,
-            raw_command=command,
-            comparison_mode=comparison_mode,
-            control_kind=None,
-            setting_warnings=warnings,
-            notes=notes,
+            exit_code=exit_code, stdout_path=stdout_path, stderr_path=stderr_path, started_at=started, ended_at=ended,
+            timed_out=timed_out, runner_crashed=runner_crashed, raw_command=command,
+            comparison_mode=comparison_mode, control_kind=None, setting_warnings=warnings, notes=notes,
         )
