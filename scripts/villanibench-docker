@@ -3,35 +3,50 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE="villanibench:local"; REBUILD=0; NO_CACHE=0; ENABLE_NESTED_DOCKER=0
-INCLUDE_LOCAL_VILLANI_CODE=0; VILLANI_CODE_SOURCE=""; VILLANI_CODE_INSTALL_SPEC=""
+VILLANI_CODE_SOURCE=""; VILLANI_CODE_INSTALL_SPEC=""; DEBUG_KEEP_STAGING=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -Rebuild|--rebuild) REBUILD=1; shift ;;
     -NoCache|--no-cache) NO_CACHE=1; shift ;;
     -Image|--image) IMAGE="$2"; shift 2 ;;
     -EnableNestedDocker|--enable-nested-docker) ENABLE_NESTED_DOCKER=1; shift ;;
-    --include-local-villani-code) INCLUDE_LOCAL_VILLANI_CODE=1; shift ;;
     --villani-code-source) VILLANI_CODE_SOURCE="$2"; shift 2 ;;
     --villani-code-install-spec) VILLANI_CODE_INSTALL_SPEC="$2"; shift 2 ;;
+    --debug-keep-villani-staging) DEBUG_KEEP_STAGING=1; shift ;;
+    --include-local-villani-code) echo "--include-local-villani-code is deprecated; use --villani-code-source" >&2; shift ;;
     --) shift; break ;;
     *) break ;;
   esac
 done
 [[ $# -gt 0 ]] || { echo "Usage: $0 [opts] <villanibench args...>" >&2; exit 1; }
 BENCH_ARGS=("$@")
-if [[ " ${BENCH_ARGS[*]} " == *" --runner villani "* ]] && [[ $REBUILD -eq 1 ]] && [[ $INCLUDE_LOCAL_VILLANI_CODE -eq 0 ]] && [[ -z "$VILLANI_CODE_SOURCE" && -z "$VILLANI_CODE_INSTALL_SPEC" ]]; then
-  if command -v villani-code >/dev/null 2>&1; then INCLUDE_LOCAL_VILLANI_CODE=1; else
-    echo "Could not package local villani-code install for Docker. Pass --villani-code-source <path> or --villani-code-install-spec <pip-or-npm-spec>." >&2; exit 2; fi
+NEEDS_VILLANI=0; [[ " ${BENCH_ARGS[*]} " == *" --runner villani "* ]] && NEEDS_VILLANI=1
+MODE="none"
+if [[ $NEEDS_VILLANI -eq 1 ]]; then
+  MODE="github"
+  [[ -n "$VILLANI_CODE_INSTALL_SPEC" ]] && MODE="spec"
+  [[ -n "$VILLANI_CODE_SOURCE" ]] && MODE="local"
+fi
+STAGED="$REPO_ROOT/.docker_build/villani-code-src"
+if [[ "$MODE" == "local" ]]; then
+  SRC="$(realpath "$VILLANI_CODE_SOURCE")"
+  [[ -d "$SRC" ]] || { echo "Invalid --villani-code-source path: $VILLANI_CODE_SOURCE" >&2; exit 2; }
+  [[ -f "$SRC/pyproject.toml" || -f "$SRC/setup.py" || -f "$SRC/package.json" ]] || { echo "Local source must contain pyproject.toml, setup.py, or package.json" >&2; exit 2; }
+  rm -rf "$STAGED"; mkdir -p "$STAGED"
+  rsync -a --delete --exclude '.git' --exclude '.venv' --exclude 'venv' --exclude '__pycache__' --exclude '.pytest_cache' --exclude '.mypy_cache' --exclude '.ruff_cache' --exclude 'node_modules' --exclude 'dist' --exclude 'build' --exclude 'artifacts' --exclude 'output' --exclude 'logs' --exclude '*.gguf' --exclude '*.safetensors' --exclude '*.bin' "$SRC/" "$STAGED/"
 fi
 BUILD_ARGS=(build -t "$IMAGE")
 [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache)
-if [[ $INCLUDE_LOCAL_VILLANI_CODE -eq 1 ]] && [[ -z "$VILLANI_CODE_SOURCE" && -z "$VILLANI_CODE_INSTALL_SPEC" ]]; then VILLANI_CODE_INSTALL_SPEC="villani-code"; fi
-[[ -n "$VILLANI_CODE_SOURCE" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_SOURCE=$VILLANI_CODE_SOURCE")
-[[ -n "$VILLANI_CODE_INSTALL_SPEC" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_SPEC=$VILLANI_CODE_INSTALL_SPEC")
+BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_MODE=$MODE")
+[[ "$MODE" == "spec" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_SPEC=$VILLANI_CODE_INSTALL_SPEC")
+[[ "$MODE" == "local" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_SOURCE_IN_CONTEXT=/tmp/villani-code-src")
 if [[ $REBUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker "${BUILD_ARGS[@]}" "$REPO_ROOT"; fi
+[[ $DEBUG_KEEP_STAGING -eq 0 ]] && [[ "$MODE" == "local" ]] && rm -rf "$STAGED"
 SANDBOX_ROOT="$REPO_ROOT/.villanibench_sandboxes"; mkdir -p "$SANDBOX_ROOT"
 DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work,rw" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes,rw" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes")
-[[ $ENABLE_NESTED_DOCKER -eq 1 ]] && DOCKER_ARGS+=(--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock -e VILLANIBENCH_ENABLE_NESTED_DOCKER=1)
+if [[ $ENABLE_NESTED_DOCKER -eq 1 ]]; then
+  if [[ -z "${VILLANIBENCH_SKIP_SOCKET_CHECK:-}" ]]; then [[ -S /var/run/docker.sock ]] || { echo "Nested Docker requires /var/run/docker.sock. Run from Linux/WSL or disable --enable-nested-docker." >&2; exit 2; }; fi
+  DOCKER_ARGS+=(--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock -e VILLANIBENCH_ENABLE_NESTED_DOCKER=1)
+fi
 if docker run --help | grep -q host-gateway; then DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway); fi
-for var in OPENAI_API_KEY ANTHROPIC_API_KEY API_KEY BASE_URL; do [[ -n "${!var:-}" ]] && DOCKER_ARGS+=(-e "$var=${!var}"); done
 exec docker "${DOCKER_ARGS[@]}" "$IMAGE" "$@"

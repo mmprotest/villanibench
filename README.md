@@ -157,3 +157,12 @@ Notes:
 
 
 See `docs/docker.md` for convenience and nested isolation Docker commands.
+
+## Docker + Villani Code
+- `--runner villani` installs Villani Code from `git+https://github.com/mmprotest/villani-code.git` by default in Docker.
+- Use `-VillaniCodeSource` / `--villani-code-source` to stage a local beta/dev checkout into Docker build context.
+- Use `-VillaniCodeInstallSpec` / `--villani-code-install-spec` for explicit install specs.
+- Docker does not inherit host venv.
+- Use `host.docker.internal` for host LM Studio.
+- `-EnableNestedDocker`/`--enable-nested-docker` is required for hard per-task isolation; without it Docker mode is convenience/repro only.
+- Native Windows PowerShell may not provide Linux Docker socket mount; use WSL for nested Docker.
