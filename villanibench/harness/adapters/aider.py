@@ -55,6 +55,15 @@ def _normalize_provider(config: dict[str, Any], model: str) -> str:
     return "openai"
 
 
+
+
+def normalize_aider_model(model: str) -> str:
+    value = str(model or "").strip()
+    if not value:
+        return ""
+    if "/" in value:
+        return value
+    return f"openai/{value}"
 def build_aider_model_config(config: dict[str, Any]) -> AiderModelConfig:
     raw_model = str(config.get("model") or "").strip()
     if not raw_model:
@@ -122,6 +131,39 @@ def build_aider_model_config(config: dict[str, Any]) -> AiderModelConfig:
     )
 
 
+
+
+def _safe_expected_files(task, repo_dir: Path) -> list[str]:
+    repo_root = Path(repo_dir).resolve()
+    expected_json = Path(task.task_dir) / "oracle" / "expected_files.json"
+    if not expected_json.exists():
+        return []
+    try:
+        payload = json.loads(expected_json.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    values = list(payload.get("expected_files") or []) + list(payload.get("strongly_expected_files") or [])
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        rel = str(raw or "").strip()
+        if not rel:
+            continue
+        candidate = Path(rel)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            continue
+        resolved = (repo_root / candidate).resolve()
+        try:
+            resolved.relative_to(repo_root)
+        except Exception:
+            continue
+        if not resolved.exists() or resolved.is_dir():
+            continue
+        posix = candidate.as_posix()
+        if posix not in seen:
+            seen.add(posix)
+            out.append(posix)
+    return out
 def _write_hermetic_aider_files(output_dir: Path) -> tuple[Path, Path, Path]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)

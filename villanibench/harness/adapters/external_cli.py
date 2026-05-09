@@ -86,12 +86,14 @@ class ExternalCliAdapter(RunnerAdapter):
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
-                if config.get("nested_docker_enabled") and config.get("sandbox_repo_host_path") and config.get("task_output_host_path"):
+                if config.get("nested_docker_enabled"):
+                    if not config.get("sandbox_repo_host_path") or not config.get("task_output_host_path"):
+                        raise RuntimeError("Nested Docker isolation was requested, but the sandbox host path could not be resolved. Refusing to run agent locally because that would break isolation.")
                     rendered = command.replace(str(cwd), "/workspace").replace(str(output_dir.resolve()), "/artifacts")
                     nested = build_nested_agent_docker_argv(
                         image=str(config.get("nested_docker_image") or "villanibench:local"),
                         host_workspace_dir=Path(str(config["sandbox_repo_host_path"])),
-                        host_artifact_dir=Path(str(config["task_output_host_path"])),
+                        host_artifact_dir=Path(str(config["task_output_host_path"])) / "agent_artifacts",
                         command_argv=["sh", "-lc", rendered],
                         env={"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
                     )
