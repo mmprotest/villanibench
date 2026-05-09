@@ -89,9 +89,11 @@ class ExternalCliAdapter(RunnerAdapter):
                 if config.get("nested_docker_enabled"):
                     if not config.get("sandbox_repo_host_path") or not config.get("agent_artifacts_host_path"):
                         raise RuntimeError("Nested Docker isolation was requested, but required host/container path mapping failed. Refusing to run the agent locally because that would break isolation.")
+                    if not str(config.get("nested_docker_image") or "").strip():
+                        raise RuntimeError("Nested Docker isolation was requested, but no nested Docker image was provided.")
                     rendered = command.replace(str(cwd), "/workspace").replace(str(output_dir.resolve()), "/artifacts")
                     nested = build_nested_agent_docker_argv(
-                        image=str(config.get("nested_docker_image") or "villanibench:local"),
+                        image=str(config.get("nested_docker_image") or ""),
                         host_workspace_dir=Path(str(config["sandbox_repo_host_path"])),
                         host_artifact_dir=Path(str(config["agent_artifacts_host_path"])),
                         command_argv=["sh", "-lc", rendered],

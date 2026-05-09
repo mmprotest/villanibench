@@ -20,3 +20,7 @@ build/
 *.ckpt
 *.tmp
 *.log
+
+.docker_build/*
+!.docker_build/villani-code-src/
+!.docker_build/villani-code-src/**

@@ -166,3 +166,10 @@ See `docs/docker.md` for convenience and nested isolation Docker commands.
 - Use `host.docker.internal` for host LM Studio.
 - `-EnableNestedDocker`/`--enable-nested-docker` is required for hard per-task isolation; without it Docker mode is convenience/repro only.
 - Native Windows PowerShell may not provide Linux Docker socket mount; use WSL for nested Docker.
+
+
+## Docker examples
+
+Main Villani Code from GitHub and local beta source modes are documented in `docs/docker.md`.
+
+Nested hard isolation (`--enable-nested-docker`) is supported from Linux/WSL wrappers. Native Windows PowerShell intentionally fails early for nested mode and should use WSL for hard isolation.

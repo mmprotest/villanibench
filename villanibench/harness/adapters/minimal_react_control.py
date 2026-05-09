@@ -205,7 +205,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
         if action is None:
             return "invalid_action"
 
-        if action in {"list_files", "read_file"}:
+        if action in {"list_files", "read_file", "run_tests"}:
             return f"{action}:{fields.get('PATH', '.')}"
 
         if action == "search":
@@ -249,6 +249,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
         patch_attempts = 0
         invalid_actions = 0
         step = 0
+        recent_action_signatures: list[str] = []
+        writes_since_verification = False
 
         output_dir = Path(config["task_output_dir"])
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +285,9 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     "Complete the user's coding task using the available actions.\n"
                     "The repository root is the current workspace.\n"
                     "Use exactly one action per response.\n"
-                    "Do not include markdown or extra prose.\n\n"
+                    "Do not include markdown or extra prose.\n"
+                    "Use this default workflow: inspect files, edit, run_tests, then finish.\n"
+                    "Do not assume hidden tests.\n\n"
                     "Available actions:\n\n"
                     "ACTION: list_files\n"
                     "PATH: .\n\n"
@@ -394,7 +398,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     invalid_actions += 1
                     obs = (
                         "Invalid action. Use exactly one ACTION with one of "
-                        "list_files/read_file/search/run_shell/write_file/replace_text/finish."
+                        "list_files/read_file/search/run_shell/run_tests/write_file/replace_text/finish."
                     )
 
                     if invalid_actions > 3:
@@ -506,6 +510,28 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             if res.timed_out:
                                 obs += "\nShell command timed out and was terminated."
 
+                elif action == "run_tests":
+                    executed = True
+                    if fields.get("PATH"):
+                        obs = "PATH is ignored for run_tests; using task visible test command."
+                    command = str(task.visible_test_command)
+                    if (self._telem.shell_commands or 0) >= budget.max_shell_commands:
+                        obs = "Shell command budget exceeded."
+                    else:
+                        self._telem.shell_commands = (self._telem.shell_commands or 0) + 1
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0.1:
+                            obs = "No benchmark wall time remaining to run tests."
+                        else:
+                            res = run_command_tree(command, repo_root, timeout_sec=max(0.1, remaining))
+                            writes_since_verification = False
+                            obs = (
+                                f"exit_code={res.exit_code}\n"
+                                f"timed_out={str(res.timed_out).lower()}\n"
+                                f"STDOUT:\n{res.stdout[:6000]}\n"
+                                f"STDERR:\n{res.stderr[:4000]}"
+                            )
+
                 elif action == "write_file":
                     executed = True
                     rel_path = fields.get("PATH", "")
@@ -518,7 +544,15 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     ):
                         obs = "Invalid write_file action or write budget reached."
                     else:
-                        content = fields.get("CONTENT")
+                        try:
+                            rel_norm = file_path.relative_to(repo_root).as_posix() if file_path is not None else ""
+                        except Exception:
+                            rel_norm = ""
+                        if rel_norm.startswith("tests/"):
+                            obs = "Refused: writing under tests/ is not allowed."
+                            content = None
+                        else:
+                            content = fields.get("CONTENT")
 
                         if content is None:
                             obs = "write_file requires CONTENT and END_CONTENT. No file was modified."
@@ -527,6 +561,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                             file_path.write_text(content, encoding="utf-8")
                             self._telem.file_writes = (self._telem.file_writes or 0) + 1
                             patch_attempts += 1
+                            writes_since_verification = True
                             obs = "write_file ok"
 
                 elif action == "replace_text":
@@ -570,13 +605,26 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                         file_path.write_text(updated, encoding="utf-8")
                                         self._telem.file_writes = (self._telem.file_writes or 0) + 1
                                         patch_attempts += 1
+                                        writes_since_verification = True
                                         obs = "replace_text ok"
 
                 elif action == "finish":
                     executed = True
-                    obs = f"finish: {fields.get('REASON', '')}"
-                    messages.append(ChatMessage(role="assistant", content=response.content))
-                    messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
+                    if writes_since_verification:
+                        invalid_actions += 1
+                        action_valid = False
+                        error = "finish_without_verification"
+                        obs = "Run tests after making edits before finish."
+                        if invalid_actions > 3:
+                            err.write("finish blocked repeatedly without verification\n")
+                            runner_crashed = True
+                            exit_code = 1
+                            crash_reason = "too many invalid actions"
+                            runner_notes = append_note(runner_notes, "minimal_react_control stopped after too many invalid actions.")
+                    else:
+                        obs = f"finish: {fields.get('REASON', '')}"
+                        messages.append(ChatMessage(role="assistant", content=response.content))
+                        messages.append(ChatMessage(role="user", content=f"OBSERVATION:\n{obs}"))
 
                 else:
                     invalid_actions += 1
@@ -585,7 +633,7 @@ class MinimalReactControlAdapter(RunnerAdapter):
                     executed = False
                     obs = (
                         "Unknown action. Use one of "
-                        "list_files/read_file/search/run_shell/write_file/replace_text/finish."
+                        "list_files/read_file/search/run_shell/run_tests/write_file/replace_text/finish."
                     )
 
                     if invalid_actions > 3:
@@ -602,6 +650,21 @@ class MinimalReactControlAdapter(RunnerAdapter):
 
                 if action_valid and error is None:
                     invalid_actions = 0
+
+                sig = self._action_signature(action, fields)
+                recent_action_signatures.append(sig)
+                if len(recent_action_signatures) > 6:
+                    recent_action_signatures.pop(0)
+                repeated_blocked = False
+                if len(recent_action_signatures) >= 6 and len(set(recent_action_signatures[-6:])) == 1:
+                    runner_crashed = True
+                    exit_code = 1
+                    crash_reason = "repeated identical actions"
+                    runner_notes = append_note(runner_notes, "minimal_react_control detected repeated identical actions and stopped.")
+                    action_valid = True
+                    error = "blocked_repeated_action"
+                    obs = "Blocked repeated identical actions."
+                    repeated_blocked = True
 
                 model_output, model_trunc = _truncate_text(response.content)
                 tool_result, tool_trunc = _truncate_text(obs)

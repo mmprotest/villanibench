@@ -76,7 +76,8 @@ def _write_models_json(*, pi_agent_dir: Path, model: str, base_url: str) -> Path
       <sandbox>/.pi-agent/agent/models.json
     """
     pi_agent_dir.mkdir(parents=True, exist_ok=True)
-    models_path = pi_agent_dir / "models.json"
+    models_path = pi_agent_dir / "agent" / "models.json"
+    models_path.parent.mkdir(parents=True, exist_ok=True)
 
     raw_model = _raw_model_id(model)
 
