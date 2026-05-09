@@ -1,10 +1,42 @@
-param(
-  [string]$Image = "villanibench:local",
-  [switch]$Rebuild,
-  [switch]$NoCache,
-  [Parameter(ValueFromRemainingArguments = $true)]
-  [string[]]$BenchArgs
-)
+[CmdletBinding(PositionalBinding = $false)]
+param()
+
+$Image = "villanibench:local"
+$Rebuild = $false
+$NoCache = $false
+$BenchArgs = @()
+
+for ($i = 0; $i -lt $args.Count; $i++) {
+  $arg = $args[$i]
+  switch ($arg) {
+    "-Rebuild" { $Rebuild = $true; continue }
+    "--rebuild" { $Rebuild = $true; continue }
+    "-NoCache" { $NoCache = $true; continue }
+    "--no-cache" { $NoCache = $true; continue }
+    "-Image" {
+      if ($i + 1 -ge $args.Count) { throw "Missing value for -Image" }
+      $i++
+      $Image = $args[$i]
+      continue
+    }
+    "--image" {
+      if ($i + 1 -ge $args.Count) { throw "Missing value for --image" }
+      $i++
+      $Image = $args[$i]
+      continue
+    }
+    "--" {
+      if ($i + 1 -lt $args.Count) {
+        $BenchArgs = @($args[($i + 1)..($args.Count - 1)])
+      }
+      break
+    }
+    default {
+      $BenchArgs = @($args[$i..($args.Count - 1)])
+      break
+    }
+  }
+}
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDir "..")
