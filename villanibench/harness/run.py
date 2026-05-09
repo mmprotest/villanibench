@@ -183,6 +183,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 "nested_docker_image": str(config.get("docker_image") or "villanibench:local"),
                 "sandbox_repo_host_path": _map_container_to_host_path(sandbox / "repo"),
                 "task_output_host_path": _map_container_to_host_path(task_output),
+                "agent_artifacts_host_path": _map_container_to_host_path((task_sandbox_output / "agent_artifacts") if (config.get("enable_nested_docker") or __import__("os").environ.get("VILLANIBENCH_ENABLE_NESTED_DOCKER")) else (task_output / "agent_artifacts")),
             }
             _log(f"[task {task_index}/{len(tasks)}] runner start budget_profile={resolved_budget_profile_id}")
             adapter.prepare(task, sandbox, adapter_cfg)

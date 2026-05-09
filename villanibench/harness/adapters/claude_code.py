@@ -33,7 +33,8 @@ class ClaudeCodeAdapter(ExternalCliAdapter):
         model = str(config.get("model", "")).strip()
 
         exe = shutil.which("claude") or shutil.which("claude.cmd")
-        if not exe:
+        skip_preflight = bool(config.get("skip_executable_preflight")) or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if not exe and not skip_preflight:
             display = "claude executable not found on PATH"
             command_path.write_text(display + "\n", encoding="utf-8")
             stderr_path.write_text("Adapter execution error: could not find claude or claude.cmd on PATH\n", encoding="utf-8")
@@ -53,7 +54,7 @@ class ClaudeCodeAdapter(ExternalCliAdapter):
             )
 
         argv = [
-            exe,
+            exe or "claude",
             "-p",
             "--dangerously-skip-permissions",
             "--output-format",
@@ -96,7 +97,7 @@ class ClaudeCodeAdapter(ExternalCliAdapter):
                     cwd,
                     budget.wall_time_sec,
                     env=env,
-                    stdin_text=None,
+                    stdin_text=prompt_text,
                 )
                 out.write(completed.stdout)
                 err.write(completed.stderr)

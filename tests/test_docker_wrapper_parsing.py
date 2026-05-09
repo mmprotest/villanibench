@@ -24,7 +24,7 @@ def _run_wrapper(*args: str) -> list[str]:
     fake_bin = repo_root / ".tmp-test-bin"
     fake_bin.mkdir(exist_ok=True)
     log = _write_fake_docker(fake_bin)
-    env = os.environ.copy(); env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env = os.environ.copy(); env["PATH"] = f"{fake_bin}:{env['PATH']}"; env["VILLANIBENCH_SKIP_SOCKET_CHECK"]="1"
     subprocess.run([str(script), *args], check=True, cwd=repo_root, env=env)
     return [l.strip() for l in log.read_text(encoding="utf-8").splitlines() if l.strip()]
 

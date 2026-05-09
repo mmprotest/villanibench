@@ -28,3 +28,10 @@ PowerShell nested isolation:
 `host.docker.internal` reaches host LM Studio from containers. On Linux, wrappers add `--add-host host.docker.internal:host-gateway` when supported.
 
 The Villani runner requires `villani-code` in the image PATH. Build with `--build-arg VILLANI_CODE_INSTALL_SPEC=<npm-spec>` to install it.
+
+## Villani install modes
+1) Default main: `--runner villani` installs from GitHub main in image build.
+2) Local beta: pass `-VillaniCodeSource` / `--villani-code-source` to copy local source into `.docker_build/villani-code-src` and install from there.
+3) Non-villani runners skip villani install.
+
+Nested Docker requires Docker socket access and refuses local fallback when requested.
