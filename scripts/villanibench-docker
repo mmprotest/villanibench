@@ -24,16 +24,19 @@ NEEDS_VILLANI=0; [[ " ${BENCH_ARGS[*]} " == *" --runner villani "* ]] && NEEDS_V
 MODE="none"
 if [[ $NEEDS_VILLANI -eq 1 ]]; then
   MODE="github"
-  [[ -n "$VILLANI_CODE_INSTALL_SPEC" ]] && MODE="spec"
-  [[ -n "$VILLANI_CODE_SOURCE" ]] && MODE="local"
 fi
+[[ -n "$VILLANI_CODE_INSTALL_SPEC" ]] && MODE="spec"
+[[ -n "$VILLANI_CODE_SOURCE" ]] && MODE="local"
 STAGED="$REPO_ROOT/.docker_build/villani-code-src"
+rm -rf "$STAGED"; mkdir -p "$STAGED"
 if [[ "$MODE" == "local" ]]; then
   SRC="$(realpath "$VILLANI_CODE_SOURCE")"
   [[ -d "$SRC" ]] || { echo "Invalid --villani-code-source path: $VILLANI_CODE_SOURCE" >&2; exit 2; }
   [[ -f "$SRC/pyproject.toml" || -f "$SRC/setup.py" || -f "$SRC/package.json" ]] || { echo "Local source must contain pyproject.toml, setup.py, or package.json" >&2; exit 2; }
   rm -rf "$STAGED"; mkdir -p "$STAGED"
   rsync -a --delete --exclude '.git' --exclude '.venv' --exclude 'venv' --exclude '__pycache__' --exclude '.pytest_cache' --exclude '.mypy_cache' --exclude '.ruff_cache' --exclude 'node_modules' --exclude 'dist' --exclude 'build' --exclude 'artifacts' --exclude 'output' --exclude 'logs' --exclude '*.gguf' --exclude '*.safetensors' --exclude '*.bin' "$SRC/" "$STAGED/"
+else
+  echo "placeholder" > "$STAGED/.keep"
 fi
 BUILD_ARGS=(build -t "$IMAGE")
 [[ $NO_CACHE -eq 1 ]] && BUILD_ARGS+=(--no-cache)
@@ -41,9 +44,9 @@ BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_MODE=$MODE")
 [[ "$MODE" == "spec" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_SPEC=$VILLANI_CODE_INSTALL_SPEC")
 [[ "$MODE" == "local" ]] && BUILD_ARGS+=(--build-arg "VILLANI_CODE_SOURCE_IN_CONTEXT=/tmp/villani-code-src")
 if [[ $REBUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker "${BUILD_ARGS[@]}" "$REPO_ROOT"; fi
-[[ $DEBUG_KEEP_STAGING -eq 0 ]] && [[ "$MODE" == "local" ]] && rm -rf "$STAGED"
+[[ $DEBUG_KEEP_STAGING -eq 0 ]] && rm -rf "$STAGED"
 SANDBOX_ROOT="$REPO_ROOT/.villanibench_sandboxes"; mkdir -p "$SANDBOX_ROOT"
-DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work,rw" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes,rw" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes")
+DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work,rw" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes,rw" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes" -e "VILLANIBENCH_NESTED_DOCKER_IMAGE=$IMAGE")
 if [[ $ENABLE_NESTED_DOCKER -eq 1 ]]; then
   if [[ -z "${VILLANIBENCH_SKIP_SOCKET_CHECK:-}" ]]; then [[ -S /var/run/docker.sock ]] || { echo "Nested Docker requires /var/run/docker.sock. Run from Linux/WSL or disable --enable-nested-docker." >&2; exit 2; }; fi
   DOCKER_ARGS+=(--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock -e VILLANIBENCH_ENABLE_NESTED_DOCKER=1)

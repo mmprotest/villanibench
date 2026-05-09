@@ -127,7 +127,7 @@ def prepare_sandbox(task: TaskSpec, task_output_dir: Path) -> tuple[Path, Path]:
     if sandbox.exists():
         shutil.rmtree(sandbox)
     repo_dst.parent.mkdir(parents=True, exist_ok=True)
-    _safe_copytree(repo_src, repo_dst, sandbox)
+    shutil.copytree(repo_src, repo_dst)
     copy_visible_tests_to_sandbox(task, sandbox)
     shutil.copy2(prompt_src, assert_under(sandbox / "prompt.txt", sandbox))
     _assert_no_symlinks(sandbox)

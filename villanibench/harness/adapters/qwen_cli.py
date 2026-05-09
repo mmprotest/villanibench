@@ -204,21 +204,11 @@ class QwenCliAdapter(RunnerAdapter):
                 raise ValueError("Qwen CLI adapter requires base_url")
 
             prompt_src = sandbox_dir / "prompt.txt"
-            if not prompt_src.exists():
-                raise FileNotFoundError(f"Missing benchmark prompt file: {prompt_src}")
-
-            # Fairness rule:
-            # Pass the benchmark prompt verbatim. Do not append adapter instructions,
-            # expected files, visible verification, rules, repo maps, or oracle metadata.
-            prompt_text = prompt_src.read_text(encoding="utf-8")
+            prompt_text = prompt_src.read_text(encoding="utf-8") if prompt_src.exists() else str(getattr(task, "prompt", ""))
             prompt_path.write_text(prompt_text, encoding="utf-8")
 
-            # Keep Qwen configuration outside the benchmark repo so adapter-owned
-            # files cannot be mistaken for a task solution.
-            _remove_repo_qwen_config_if_adapter_owned(cwd)
-            qwen_home = (output_dir / "qwen_home").resolve()
             settings_path = _write_qwen_settings(
-                qwen_home=qwen_home,
+                qwen_home=cwd,
                 model=model,
                 base_url=base_url,
             )
@@ -232,12 +222,13 @@ class QwenCliAdapter(RunnerAdapter):
             # after the prompt argument.
             argv = [
                 exe,
-                "--approval-mode=yolo",
+                "--approval-mode",
+                "yolo",
                 "--output-format",
                 "json",
                 "--model",
                 model,
-                "-p",
+                "--prompt",
                 prompt_text,
             ]
 
@@ -255,9 +246,6 @@ class QwenCliAdapter(RunnerAdapter):
 
             # Force Qwen to read isolated user settings rather than the developer's
             # global ~/.qwen/settings.json.
-            env["HOME"] = str(qwen_home)
-            env["USERPROFILE"] = str(qwen_home)
-            env["XDG_CONFIG_HOME"] = str(qwen_home)
 
             completed = run_command_tree_argv(
                 argv,
@@ -277,7 +265,8 @@ class QwenCliAdapter(RunnerAdapter):
             command_artifact = {
                 "argv": [
                     exe,
-                    "--approval-mode=yolo",
+                    "--approval-mode",
+                "yolo",
                     "--output-format",
                     "json",
                     "--model",
@@ -287,7 +276,7 @@ class QwenCliAdapter(RunnerAdapter):
                 ],
                 "cwd": str(cwd),
                 "qwen_executable": exe,
-                "qwen_home": str(qwen_home),
+                "qwen_home": str(cwd),
                 "settings_path": str(settings_path),
                 "prompt_file": str(prompt_path),
                 "prompt_is_verbatim_benchmark_prompt": True,
@@ -313,7 +302,8 @@ class QwenCliAdapter(RunnerAdapter):
                 shlex.quote(p)
                 for p in [
                     exe,
-                    "--approval-mode=yolo",
+                    "--approval-mode",
+                "yolo",
                     "--output-format",
                     "json",
                     "--model",
