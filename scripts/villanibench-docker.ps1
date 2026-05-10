@@ -15,9 +15,9 @@ New-Item -ItemType Directory -Force -Path $staged | Out-Null
 if ($mode -eq "local") {
   $src = (Resolve-Path $VillaniCodeSource -ErrorAction Stop).Path
   if (-not (Test-Path (Join-Path $src "pyproject.toml")) -and -not (Test-Path (Join-Path $src "setup.py")) -and -not (Test-Path (Join-Path $src "package.json"))) { throw "Local source must contain pyproject.toml, setup.py, or package.json" }
-  if (Test-Path $staged) { Remove-Item -Recurse -Force $staged }
-  New-Item -ItemType Directory -Force -Path $staged | Out-Null
   robocopy $src $staged /MIR /XD .git .venv venv __pycache__ .pytest_cache .mypy_cache .ruff_cache node_modules dist build artifacts output logs /XF *.gguf *.safetensors *.bin | Out-Null
+  if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE while staging local source from $src to $staged" }
+  if (-not (Test-Path (Join-Path $staged "pyproject.toml")) -and -not (Test-Path (Join-Path $staged "setup.py")) -and -not (Test-Path (Join-Path $staged "package.json"))) { throw "Staged local source missing required manifest after copy. Source: $src ; Staged: $staged ; expected one of pyproject.toml, setup.py, or package.json" }
 } else { Set-Content -Path (Join-Path $staged ".keep") -Value "placeholder" -Encoding utf8 }
 
 $imageExists = $true; try { docker image inspect $Image | Out-Null } catch { $imageExists = $false }
@@ -26,8 +26,6 @@ if ($Rebuild -or -not $imageExists) {
   $buildArgs += @("--build-arg","VILLANI_CODE_INSTALL_MODE=$mode")
   if ($mode -eq "spec") { $buildArgs += @("--build-arg","VILLANI_CODE_INSTALL_SPEC=$VillaniCodeInstallSpec") }
   if ($EnableNestedDocker -and $IsWindows) { throw "Nested Docker isolation from native Windows PowerShell is not supported reliably. Run scripts/villanibench-docker from WSL, or omit -EnableNestedDocker for convenience mode." }
-if (Test-Path $staged) { Remove-Item -Recurse -Force $staged }
-New-Item -ItemType Directory -Force -Path $staged | Out-Null
 if ($mode -eq "local") { $buildArgs += @("--build-arg","VILLANI_CODE_SOURCE_IN_CONTEXT=/tmp/villani-code-src") }
   $buildArgs += $repoRoot; & docker @buildArgs; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

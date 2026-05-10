@@ -41,3 +41,23 @@ def test_process_argv_helper_uses_shell_false():
     text = Path("villanibench/harness/process.py").read_text(encoding="utf-8")
     assert 'def run_command_tree_argv' in text
     assert 'shell=False' in text
+
+
+def test_powershell_wrapper_local_mode_build_args_and_staging_guardrails():
+    text = Path("scripts/villanibench-docker.ps1").read_text(encoding="utf-8")
+    assert 'VILLANI_CODE_INSTALL_MODE=$mode' in text
+    assert 'VILLANI_CODE_SOURCE_IN_CONTEXT=/tmp/villani-code-src' in text
+    assert 'Staged local source missing required manifest after copy.' in text
+
+
+def test_powershell_wrapper_does_not_reset_staged_source_inside_build_block():
+    text = Path("scripts/villanibench-docker.ps1").read_text(encoding="utf-8")
+    build_block = text.split('if ($Rebuild -or -not $imageExists) {', 1)[1].split('}\nif (Test-Path $staged)', 1)[0]
+    assert 'Remove-Item -Recurse -Force $staged' not in build_block
+    assert 'New-Item -ItemType Directory -Force -Path $staged' not in build_block
+
+
+def test_powershell_wrapper_robocopy_exit_code_handling():
+    text = Path("scripts/villanibench-docker.ps1").read_text(encoding="utf-8")
+    assert 'if ($LASTEXITCODE -ge 8)' in text
+    assert 'robocopy failed with exit code $LASTEXITCODE' in text
