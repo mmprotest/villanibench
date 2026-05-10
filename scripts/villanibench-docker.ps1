@@ -31,7 +31,7 @@ if ($mode -eq "local") { $buildArgs += @("--build-arg","VILLANI_CODE_SOURCE_IN_C
 }
 if (Test-Path $staged) { Remove-Item -Recurse -Force $staged }
 $sandboxHostRoot = Join-Path $repoRoot ".villanibench_sandboxes"; New-Item -ItemType Directory -Force -Path $sandboxHostRoot | Out-Null
-$dockerArgs = @("run","--rm","--mount","type=bind,src=$repoRoot,dst=/work,rw","--mount","type=bind,src=$sandboxHostRoot,dst=/sandboxes,rw","-w","/work","-e","VILLANIBENCH_HOST_SANDBOX_ROOT=$sandboxHostRoot","-e","VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes","-e","VILLANIBENCH_NESTED_DOCKER_IMAGE=$Image")
+$dockerArgs = @("run","--rm","--mount","type=bind,src=$repoRoot,dst=/work","--mount","type=bind,src=$sandboxHostRoot,dst=/sandboxes","-w","/work","-e","VILLANIBENCH_HOST_SANDBOX_ROOT=$sandboxHostRoot","-e","VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes","-e","VILLANIBENCH_NESTED_DOCKER_IMAGE=$Image")
 if ($EnableNestedDocker) {
   if (-not (Test-Path "/var/run/docker.sock")) { throw "Nested Docker requires /var/run/docker.sock. Run from WSL/Linux or disable -EnableNestedDocker." }
   $dockerArgs += @("--mount","type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock","-e","VILLANIBENCH_ENABLE_NESTED_DOCKER=1")

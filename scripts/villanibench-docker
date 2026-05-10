@@ -46,7 +46,7 @@ BUILD_ARGS+=(--build-arg "VILLANI_CODE_INSTALL_MODE=$MODE")
 if [[ $REBUILD -eq 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then docker "${BUILD_ARGS[@]}" "$REPO_ROOT"; fi
 [[ $DEBUG_KEEP_STAGING -eq 0 ]] && rm -rf "$STAGED"
 SANDBOX_ROOT="$REPO_ROOT/.villanibench_sandboxes"; mkdir -p "$SANDBOX_ROOT"
-DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work,rw" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes,rw" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes" -e "VILLANIBENCH_NESTED_DOCKER_IMAGE=$IMAGE")
+DOCKER_ARGS=(run --rm --mount "type=bind,src=$REPO_ROOT,dst=/work" --mount "type=bind,src=$SANDBOX_ROOT,dst=/sandboxes" -w /work -e "VILLANIBENCH_HOST_SANDBOX_ROOT=$SANDBOX_ROOT" -e "VILLANIBENCH_CONTAINER_SANDBOX_ROOT=/sandboxes" -e "VILLANIBENCH_NESTED_DOCKER_IMAGE=$IMAGE")
 if [[ $ENABLE_NESTED_DOCKER -eq 1 ]]; then
   if [[ -z "${VILLANIBENCH_SKIP_SOCKET_CHECK:-}" ]]; then [[ -S /var/run/docker.sock ]] || { echo "Nested Docker requires /var/run/docker.sock. Run from Linux/WSL or disable --enable-nested-docker." >&2; exit 2; }; fi
   DOCKER_ARGS+=(--mount type=bind,src=/var/run/docker.sock,dst=/var/run/docker.sock -e VILLANIBENCH_ENABLE_NESTED_DOCKER=1)
