@@ -75,3 +75,26 @@ def test_windows_cmd_executable_wrapped_for_createprocess(monkeypatch, tmp_path)
     assert "/s" in seen["command_line"]
     assert "/c" in seen["command_line"]
     assert "villani-code.cmd" in seen["command_line"]
+
+
+def test_windows_failure_message_contains_getlasterror(monkeypatch, tmp_path):
+    monkeypatch.setattr(p.os, "name", "nt")
+    monkeypatch.setattr(p.ctypes, "get_last_error", lambda: 5, raising=False)
+    monkeypatch.setattr(p.ctypes, "WinError", lambda code: type("E", (), {"strerror": "Access is denied."})(), raising=False)
+
+    class FakeK32:
+        def CreateFileW(self, *a): return 11
+        def GetStdHandle(self, *a): return 12
+        def CloseHandle(self, *a): return 1
+
+    class FakeAdv:
+        def CreateProcessWithLogonW(self, *a): return 0
+
+    monkeypatch.setattr(p.ctypes, "WinDLL", lambda name, use_last_error=True: FakeK32() if name == "kernel32" else FakeAdv(), raising=False)
+    try:
+        p._windows_create_process_with_logon("C:\\x\\villani-code.exe run", tmp_path, 0.1, {}, SandboxIdentity("villanibench_sandbox", "pw"))
+        assert False
+    except RuntimeError as exc:
+        s = str(exc)
+        assert "GetLastError=5" in s
+        assert "Access is denied." in s

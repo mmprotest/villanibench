@@ -27,6 +27,7 @@ def prepare_sandbox(
     task: TaskSpec,
     task_output_dir: Path,
     sandbox_identity: SandboxIdentity | None = None,
+    log=None,
 ) -> tuple[Path, Path]:
     sandbox = task_output_dir / "sandbox"
     repo_dst = sandbox / "repo"
@@ -41,5 +42,5 @@ def prepare_sandbox(
         runner_tmp = task_output_dir / "runner_tmp"
         runner_home.mkdir(parents=True, exist_ok=True)
         runner_tmp.mkdir(parents=True, exist_ok=True)
-        grant_task_sandbox_access(sandbox_identity, [sandbox, runner_home, runner_tmp])
+        grant_task_sandbox_access(sandbox_identity, [sandbox, runner_home, runner_tmp], log=log)
     return sandbox, repo_dst

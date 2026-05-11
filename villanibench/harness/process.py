@@ -8,6 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from villanibench.harness.os_sandbox_user import SandboxIdentity
 
@@ -113,8 +114,13 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
     stdout_path = runner_tmp / f"proc_out_{time.time_ns()}.log"
     stderr_path = runner_tmp / f"proc_err_{time.time_ns()}.log"
 
-    k32 = ctypes.windll.kernel32
-    advapi32 = ctypes.windll.advapi32
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is not None:
+        k32 = win_dll("kernel32", use_last_error=True)
+        advapi32 = win_dll("advapi32", use_last_error=True)
+    else:
+        k32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
 
     sa = SECURITY_ATTRIBUTES(nLength=ctypes.sizeof(SECURITY_ATTRIBUTES), lpSecurityDescriptor=None, bInheritHandle=1)
     GENERIC_WRITE = 0x40000000
@@ -144,7 +150,20 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
     try:
         ok = advapi32.CreateProcessWithLogonW(identity.username, ".", identity.password, LOGON_WITH_PROFILE, None, ctypes.c_wchar_p(command_line), CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP, lp_environment, str(cwd), ctypes.byref(startup), ctypes.byref(pi))
         if not ok:
-            raise RuntimeError(f"Failed to launch sandboxed process as {identity.username}.")
+            get_last_error = getattr(ctypes, "get_last_error", None)
+            err_code = int(get_last_error() if get_last_error is not None else 0)
+            win_err = ctypes.WinError(err_code) if hasattr(ctypes, "WinError") else OSError(err_code, "Windows error")
+            exe_guess = _extract_executable_from_cmdline(command_line)
+            detail = (
+                f"Failed to launch sandboxed process as {identity.username}. "
+                f"GetLastError={err_code} WinError='{win_err.strerror}' "
+                f"command_line='{command_line}' executable='{exe_guess}' "
+                f"exists={Path(exe_guess).exists() if exe_guess else False} "
+                f"is_file={Path(exe_guess).is_file() if exe_guess else False} "
+                f"cwd='{cwd}' cwd_exists={cwd.exists()} env={_selected_env_summary(env)}"
+            )
+            print(f"[sandbox-launch] {detail}", flush=True)
+            raise RuntimeError(detail)
         wait_res = k32.WaitForSingleObject(pi.hProcess, int(timeout_sec * 1000))
         if wait_res == WAIT_TIMEOUT:
             timed_out = True
@@ -170,6 +189,21 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
     if timed_out:
         err = f"{err.rstrip()}\nCommand timed out after {timeout_sec:.1f}s and was terminated.".strip()
     return ProcessResult(exit_code, out, err, timed_out, time.monotonic() - start)
+
+
+def _extract_executable_from_cmdline(command_line: str) -> str:
+    try:
+        parsed = shlex.split(command_line, posix=False)
+        return parsed[0] if parsed else ""
+    except Exception:
+        return ""
+
+
+def _selected_env_summary(env: Mapping[str, str] | None) -> dict[str, str]:
+    if not env:
+        return {}
+    keys = ("PATH", "PYTHONPATH", "VIRTUAL_ENV", "SystemRoot", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA")
+    return {k: env.get(k, "") for k in keys if env.get(k)}
 
 def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None = None, sandbox_identity: SandboxIdentity | None = None) -> ProcessResult:
     start = time.monotonic()

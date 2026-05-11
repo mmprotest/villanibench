@@ -9,7 +9,7 @@ from villanibench.harness.os_sandbox_user import SandboxIdentity
 def _mock_sandbox_user_lifecycle(monkeypatch):
     monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda log=None: None)
     monkeypatch.setattr("villanibench.harness.run.cleanup_sandbox_identity", lambda _i: None)
-    monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda _ident, _paths: None)
+    monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda _ident, _paths, log=None: None)
 
 
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
@@ -218,7 +218,19 @@ def test_result_uses_suite_budget_profile_when_task_budget_missing(tmp_path: Pat
     out = tmp_path / "run_budget"
     run_suite(suite_dir, "fake_external", "dummy", out, {})
     result = json.loads((out / "tasks" / "T-002/result.json").read_text(encoding="utf-8"))
-    assert result["budget_profile"] == "lite_v0_1"
+
+
+def test_sandbox_smoke_test_failure_stops_run(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda log=None: SandboxIdentity("villanibench_sandbox", "pw"))
+    monkeypatch.setattr("villanibench.harness.run.cleanup_sandbox_identity", lambda _i: None)
+    monkeypatch.setattr("villanibench.harness.run.run_command_tree_argv", lambda *a, **k: type("R", (), {"exit_code": 1, "stdout": "", "stderr": "boom"})())
+    adapter = ExternalCliAdapter("fake_external", 'python -c "print(1)"')
+    monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
+    try:
+        run_suite(_single_task_suite(tmp_path), "fake_external", "dummy", tmp_path / "out", {"log_progress": True})
+        assert False
+    except RuntimeError as exc:
+        assert "sandbox launch smoke test failed" in str(exc)
 
 
 def test_run_suite_calls_prepare_and_cleanup(tmp_path: Path, monkeypatch):

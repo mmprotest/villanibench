@@ -11,7 +11,7 @@ from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.notes import append_note
 from villanibench.harness.os_sandbox_user import cleanup_sandbox_identity, create_sandbox_identity
-from villanibench.harness.process import run_command_tree
+from villanibench.harness.process import run_command_tree, run_command_tree_argv
 from villanibench.harness.result_schema import TaskResult
 from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
 from villanibench.tasks.loader import load_suite
@@ -79,6 +79,15 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         _log("[run] sandbox user create start username=villanibench_sandbox")
         sandbox_identity = create_sandbox_identity(log=_log)
         _log("[run] sandbox user create done username=villanibench_sandbox")
+        _log(f"[run] sandbox mode enabled={sandbox_identity is not None} username={getattr(sandbox_identity, 'username', None)}")
+        if sandbox_identity is not None:
+            _log(f"[run] sandbox launch smoke test start username={sandbox_identity.username}")
+            smoke = run_command_tree_argv(["cmd.exe", "/c", "whoami"] if __import__("os").name == "nt" else ["whoami"], output_dir, 15, sandbox_identity=sandbox_identity)
+            _log(f"[run] sandbox launch smoke test done exit_code={smoke.exit_code} stdout={smoke.stdout.strip()[:120]} stderr={smoke.stderr.strip()[:120]}")
+            if smoke.exit_code != 0:
+                msg = f"[run] sandbox launch smoke test failed: exit_code={smoke.exit_code} stderr={smoke.stderr.strip()[:300]}"
+                _log(msg)
+                raise RuntimeError(msg)
         for task_index, task in enumerate(tasks, start=1):
             _log(f"[task {task_index}/{len(tasks)}] start task_id={task.id}")
             task_output = output_dir / "tasks" / task.id
@@ -97,7 +106,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
                 category=task.category,
             )
             try:
-                sandbox, _repo = prepare_sandbox(task, task_output, sandbox_identity=sandbox_identity)
+                sandbox, _repo = prepare_sandbox(task, task_output, sandbox_identity=sandbox_identity, log=_log)
                 test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
                 pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
                 _log(
@@ -250,4 +259,3 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             _log("[run] sandbox user cleanup start username=villanibench_sandbox")
             cleanup_sandbox_identity(sandbox_identity)
             _log("[run] sandbox user cleanup done username=villanibench_sandbox")
-
