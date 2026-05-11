@@ -61,7 +61,7 @@ def test_external_cli_sets_utf8_env(tmp_path: Path, monkeypatch):
     out.mkdir()
     seen = {}
 
-    def _fake_run_command_tree(command, cwd, timeout_sec, env=None):
+    def _fake_run_command_tree(command, cwd, timeout_sec, env=None, sandbox_identity=None):
         seen["env"] = env or {}
         class R:
             exit_code = 0

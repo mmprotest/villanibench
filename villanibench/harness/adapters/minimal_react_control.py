@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from pathlib import Path
 
 from villanibench.harness.llm import ChatClient, ChatMessage, OpenAICompatibleChatClient
 from villanibench.harness.notes import append_note
+from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree
 from villanibench.harness.telemetry import Telemetry
 
@@ -495,6 +497,8 @@ class MinimalReactControlAdapter(RunnerAdapter):
                                 command,
                                 repo_root,
                                 timeout_sec=max(0.1, remaining),
+                                env=sandbox_env(os.environ.copy(), Path(config["task_output_dir"])),
+                                sandbox_identity=config.get("sandbox_identity"),
                             )
                             obs = (
                                 f"exit_code={res.exit_code}\n"

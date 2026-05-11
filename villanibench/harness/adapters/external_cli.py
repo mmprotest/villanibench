@@ -61,11 +61,13 @@ class ExternalCliAdapter(RunnerAdapter):
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
-                sandbox_identity = config.get("sandbox_identity")
-                if sandbox_identity is None:
-                    completed = run_command_tree(command, cwd, budget.wall_time_sec, env=env)
-                else:
-                    completed = run_command_tree(command, cwd, budget.wall_time_sec, env=env, sandbox_identity=sandbox_identity)
+                completed = run_command_tree(
+                    command,
+                    cwd,
+                    budget.wall_time_sec,
+                    env=env,
+                    sandbox_identity=config.get("sandbox_identity"),
+                )
                 out.write(completed.stdout)
                 err.write(completed.stderr)
                 timed_out = completed.timed_out

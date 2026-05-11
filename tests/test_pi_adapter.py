@@ -33,7 +33,7 @@ def test_pi_writes_models_json_and_env_and_argv_with_base_url(monkeypatch, tmp_p
     out.mkdir()
     seen = {}
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["argv"] = argv
         seen["cwd"] = cwd
         seen["env"] = env or {}
@@ -95,7 +95,7 @@ def test_pi_argv_without_base_url_has_no_provider(monkeypatch, tmp_path: Path):
     out.mkdir()
     seen = {}
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["argv"] = argv
 
         class R:
@@ -119,7 +119,7 @@ def test_pi_timeout_bubbles(monkeypatch, tmp_path: Path):
     out = tmp_path / "out"
     out.mkdir()
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         class R:
             exit_code = 124
             stdout = ""

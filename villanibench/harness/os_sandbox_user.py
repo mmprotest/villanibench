@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 import string
 import subprocess
 from dataclasses import dataclass
@@ -76,9 +77,13 @@ def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path]) -> N
     if os.name == "posix":
         if os.uname().sysname == "Darwin":
             raise RuntimeError("macOS sandbox-user permissions are not implemented.")
+        has_setfacl = shutil.which("setfacl") is not None
         for path in paths:
-            subprocess.run(["chown", "-R", f"{identity.username}:{identity.username}", str(path)], check=True, capture_output=True, text=True)
-            subprocess.run(["chmod", "-R", "u+rwX", str(path)], check=True, capture_output=True, text=True)
+            if has_setfacl:
+                subprocess.run(["setfacl", "-Rm", f"u:{identity.username}:rwx", str(path)], check=True, capture_output=True, text=True)
+                subprocess.run(["setfacl", "-Rdm", f"u:{identity.username}:rwx", str(path)], check=True, capture_output=True, text=True)
+            else:
+                subprocess.run(["chmod", "-R", "a+rwX", str(path)], check=True, capture_output=True, text=True)
         return
 
     raise RuntimeError(f"Unsupported OS for sandbox permissions: {os.name}")

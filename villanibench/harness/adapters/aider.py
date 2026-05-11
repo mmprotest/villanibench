@@ -56,6 +56,15 @@ def _normalize_provider(config: dict[str, Any], model: str) -> str:
     return "openai"
 
 
+def normalize_aider_model(model: str) -> str:
+    value = str(model or "").strip()
+    if not value:
+        return value
+    if "/" in value:
+        return value
+    return f"openai/{value}"
+
+
 def build_aider_model_config(config: dict[str, Any]) -> AiderModelConfig:
     raw_model = str(config.get("model") or "").strip()
     if not raw_model:
@@ -206,31 +215,56 @@ def _build_redacted_argv(argv: list[str], redacted_values: set[str]) -> list[str
     ]
 
 
-def _git_env() -> dict[str, str]:
-    env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
-    env.update(
-        {
-            "GIT_AUTHOR_NAME": "bench",
-            "GIT_AUTHOR_EMAIL": "bench@example.com",
-            "GIT_COMMITTER_NAME": "bench",
-            "GIT_COMMITTER_EMAIL": "bench@example.com",
-        }
-    )
+def _safe_expected_files(task, repo_root: Path) -> list[str]:
+    expected_file = task.task_dir / "oracle" / "expected_files.json"
+    if not expected_file.exists():
+        return []
+    try:
+        payload = json.loads(expected_file.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    candidates = payload.get("expected_files", [])
+    safe: list[str] = []
+    for rel in candidates:
+        p = Path(str(rel))
+        if p.is_absolute() or ".." in p.parts:
+            continue
+        if any(part.startswith(".") for part in p.parts):
+            continue
+        rel_s = p.as_posix()
+        if rel_s.startswith(("tests/hidden", "oracle/", ".villani", ".villani_code")):
+            continue
+        abs_path = (repo_root / p).resolve()
+        try:
+            abs_path.relative_to(repo_root.resolve())
+        except ValueError:
+            continue
+        if abs_path.exists() and abs_path.is_file():
+            safe.append(rel_s)
+    return safe
+
+
+def _git_env(task_output_dir: Path) -> dict[str, str]:
+    env = sandbox_env(os.environ.copy(), task_output_dir)
+    env.setdefault("GIT_AUTHOR_NAME", "VillaniBench")
+    env.setdefault("GIT_AUTHOR_EMAIL", "villanibench@example.local")
+    env.setdefault("GIT_COMMITTER_NAME", "VillaniBench")
+    env.setdefault("GIT_COMMITTER_EMAIL", "villanibench@example.local")
     return env
 
 
-def _run_git(args: list[str], cwd: Path) -> None:
+def _run_git(args: list[str], cwd: Path, task_output_dir: Path) -> None:
     subprocess.run(
         ["git", *args],
         cwd=cwd,
         check=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        env=_git_env(),
+        env=_git_env(task_output_dir),
     )
 
 
-def _ensure_isolated_git_repo(cwd: Path) -> bool:
+def _ensure_isolated_git_repo(cwd: Path, task_output_dir: Path) -> bool:
     """
     Ensure Aider sees the benchmark sandbox as its repo, not the parent
     VillaniBench repo.
@@ -243,13 +277,13 @@ def _ensure_isolated_git_repo(cwd: Path) -> bool:
     if (cwd / ".git").exists():
         return False
 
-    _run_git(["init"], cwd)
-    _run_git(["config", "user.name", "bench"], cwd)
-    _run_git(["config", "user.email", "bench@example.com"], cwd)
-    _run_git(["add", "-A"], cwd)
+    _run_git(["init"], cwd, task_output_dir)
+    _run_git(["config", "user.name", "bench"], cwd, task_output_dir)
+    _run_git(["config", "user.email", "bench@example.com"], cwd, task_output_dir)
+    _run_git(["add", "-A"], cwd, task_output_dir)
 
     try:
-        _run_git(["commit", "-m", "benchmark baseline"], cwd)
+        _run_git(["commit", "-m", "benchmark baseline"], cwd, task_output_dir)
     except subprocess.CalledProcessError:
         # Empty repos are unusual for these tasks, but do not crash just because
         # there was nothing to commit.
@@ -298,7 +332,7 @@ class AiderAdapter(RunnerAdapter):
             prompt_text = prompt_src.read_text(encoding="utf-8")
             prompt_path.write_text(prompt_text, encoding="utf-8")
 
-            created_git_repo = _ensure_isolated_git_repo(cwd)
+            created_git_repo = _ensure_isolated_git_repo(cwd, output_dir)
 
             argv = [
                 exe,
@@ -355,7 +389,7 @@ class AiderAdapter(RunnerAdapter):
                 "--show-diffs",
             ]
 
-            env = os.environ.copy()
+            env = sandbox_env(os.environ.copy(), output_dir)
 
             for key in [
                 "AIDER_MODEL",
