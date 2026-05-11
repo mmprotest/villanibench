@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
 from pathlib import Path
+from typing import Mapping
 
 from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree_argv
@@ -54,6 +54,7 @@ class ExternalCliAdapter(RunnerAdapter):
             visible_test_command=str(task.visible_test_command),
         )
         env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
+        diag_path = output_dir / "adapter_diagnostics.txt"
         argv: list[str] = []
 
         started = now_iso()
@@ -72,6 +73,35 @@ class ExternalCliAdapter(RunnerAdapter):
                 if not argv:
                     raise RuntimeError("Command template produced an empty command.")
                 argv[0] = resolve_executable_for_sandbox(argv[0], env)
+                exe = Path(argv[0])
+                path_entries = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+                env_diag = redact_env_for_diagnostics(env)
+                diag_lines = [
+                    f"runner={self.name}",
+                    f"rendered_command={command}",
+                    f"argv={argv}",
+                    f"resolved_executable={argv[0]}",
+                    f"resolved_executable_exists={exe.exists()}",
+                    f"resolved_executable_is_file={exe.is_file()}",
+                    f"resolved_executable_suffix={exe.suffix}",
+                    f"cwd={cwd}",
+                    f"cwd_exists={cwd.exists()}",
+                    f"path_entries_count={len(path_entries)}",
+                    f"path_entries_head={path_entries[:5]}",
+                    f"sandbox_enabled={bool(config.get('sandbox_identity'))}",
+                    f"sandbox_username={getattr(config.get('sandbox_identity'), 'username', None)}",
+                    f"env_redacted={env_diag}",
+                ]
+                venv_lines = detect_venv_runner_diagnostics(exe)
+                diag_lines.extend(venv_lines)
+                print(f"[adapter:{self.name}] command rendered: {command}", flush=True)
+                print(f"[adapter:{self.name}] argv parsed argc={len(argv)} executable={argv[0]}", flush=True)
+                print(f"[adapter:{self.name}] executable resolved path={argv[0]} exists={exe.exists()} is_file={exe.is_file()}", flush=True)
+                print(f"[adapter:{self.name}] cwd={cwd} exists={cwd.exists()}", flush=True)
+                print(f"[adapter:{self.name}] sandbox identity username={getattr(config.get('sandbox_identity'), 'username', None)} enabled={bool(config.get('sandbox_identity'))}", flush=True)
+                if venv_lines:
+                    print(f"[adapter:{self.name}] {venv_lines[0]}", flush=True)
+                diag_path.write_text("\n".join(diag_lines) + "\n", encoding="utf-8")
                 completed = run_command_tree_argv(
                     argv,
                     cwd,
@@ -85,6 +115,11 @@ class ExternalCliAdapter(RunnerAdapter):
                 exit_code = completed.exit_code
                 runner_crashed = completed.exit_code != 0 and not completed.timed_out
             except Exception as exc:
+                try:
+                    with diag_path.open("a", encoding="utf-8") as df:
+                        df.write(f"launch_error={type(exc).__name__}: {exc}\n")
+                except Exception:
+                    pass
                 err.write(f"Adapter execution error: {exc}\n")
                 runner_crashed = True
                 exit_code = 1
@@ -118,3 +153,29 @@ class ExternalCliAdapter(RunnerAdapter):
             setting_warnings=warnings,
             notes=notes,
         )
+
+
+def redact_env_for_diagnostics(env: Mapping[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in env.items():
+        ku = k.upper()
+        if any(x in ku for x in ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH")):
+            out[k] = "<redacted>"
+            continue
+        if ku in {"PATH", "PYTHONPATH", "VIRTUAL_ENV", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "LOCALAPPDATA", "APPDATA"}:
+            out[k] = v
+    return out
+
+
+def detect_venv_runner_diagnostics(executable: Path) -> list[str]:
+    parts = [p.lower() for p in executable.parts]
+    if "scripts" not in parts or (".venv" not in parts and "venv" not in parts):
+        return []
+    scripts_idx = parts.index("scripts")
+    venv_path = Path(*executable.parts[:scripts_idx])
+    python_exe = venv_path / "Scripts" / "python.exe"
+    site_packages = venv_path / "Lib" / "site-packages"
+    pth_files = list(site_packages.glob("*.pth")) if site_packages.exists() else []
+    return [
+        f"venv detected path={venv_path} python_exists={python_exe.exists()} site_packages_exists={site_packages.exists()} entrypoint_exists={executable.exists()} pth_files={len(pth_files)} pth_names={[p.name for p in pth_files]}",
+    ]

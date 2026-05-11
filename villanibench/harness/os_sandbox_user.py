@@ -100,13 +100,13 @@ def create_sandbox_identity(log: Callable[[str], None] | None = None) -> Sandbox
     password = _generate_password()
     if os.name == "nt":
         _emit(f"[sandbox-user] admin check start username={SANDBOX_USERNAME}")
-        if not _is_windows_admin():
+        is_admin = _is_windows_admin()
+        _emit(f"[sandbox-user] admin check done username={SANDBOX_USERNAME} passed={is_admin}")
+        if not is_admin:
             raise RuntimeError("Creating sandbox user 'villanibench_sandbox' requires an elevated Administrator shell on Windows.")
-        _emit(f"[sandbox-user] admin check done username={SANDBOX_USERNAME}")
-
         _emit(f"[sandbox-user] stale delete start username={SANDBOX_USERNAME} method=netapi32")
         delete_status = _netapi32().NetUserDel(None, SANDBOX_USERNAME)
-        _emit(f"[sandbox-user] stale delete done username={SANDBOX_USERNAME} method=netapi32 status={delete_status}")
+        _emit(f"[sandbox-user] stale delete done username={SANDBOX_USERNAME} method=netapi32 attempted=True status={delete_status}")
         if delete_status not in (NERR_Success, NERR_UserNotFound):
             raise RuntimeError(f"Failed stale sandbox-user delete for '{SANDBOX_USERNAME}' with status {delete_status}.")
 
@@ -123,7 +123,7 @@ def create_sandbox_identity(log: Callable[[str], None] | None = None) -> Sandbox
         param_err = ctypes.c_uint32(0)
         _emit(f"[sandbox-user] create start username={SANDBOX_USERNAME} method=netapi32")
         create_status = _netapi32().NetUserAdd(None, 1, ctypes.byref(info), ctypes.byref(param_err))
-        _emit(f"[sandbox-user] create done username={SANDBOX_USERNAME} method=netapi32 status={create_status}")
+        _emit(f"[sandbox-user] create done username={SANDBOX_USERNAME} method=netapi32 status={create_status} succeeded={create_status == NERR_Success}")
         if create_status != NERR_Success:
             raise RuntimeError(f"NetUserAdd failed for '{SANDBOX_USERNAME}' with status {create_status} (param_err={param_err.value}).")
 
@@ -165,10 +165,22 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
     print(f"WARNING: could not cleanup sandbox user {identity.username}: unsupported OS")
 
 
-def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path]) -> None:
+def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log: Callable[[str], None] | None = None) -> None:
+    def _emit(msg: str) -> None:
+        if log is not None:
+            log(msg)
+    failed = 0
     if os.name == "nt":
         for path in paths:
-            _run_admin_command(["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"])
+            _emit(f"[sandbox-user] access grant start username={identity.username} path={path} mode=modify")
+            try:
+                _run_admin_command(["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"])
+                _emit(f"[sandbox-user] access grant done username={identity.username} path={path}")
+            except Exception as exc:
+                failed += 1
+                _emit(f"[sandbox-user] access grant failed username={identity.username} path={path} error_type={type(exc).__name__} error={exc}")
+                raise
+        _emit(f"[sandbox-user] access summary username={identity.username} grants={len(paths)} failed={failed}")
         return
 
     if os.name == "posix":
@@ -176,11 +188,14 @@ def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path]) -> N
             raise RuntimeError("macOS sandbox-user permissions are not implemented.")
         has_setfacl = shutil.which("setfacl") is not None
         for path in paths:
+            _emit(f"[sandbox-user] access grant start username={identity.username} path={path} mode=read_write_execute")
             if has_setfacl:
                 subprocess.run(["setfacl", "-Rm", f"u:{identity.username}:rwx", str(path)], check=True, capture_output=True, text=True)
                 subprocess.run(["setfacl", "-Rdm", f"u:{identity.username}:rwx", str(path)], check=True, capture_output=True, text=True)
             else:
                 subprocess.run(["chmod", "-R", "a+rwX", str(path)], check=True, capture_output=True, text=True)
+            _emit(f"[sandbox-user] access grant done username={identity.username} path={path}")
+        _emit(f"[sandbox-user] access summary username={identity.username} grants={len(paths)} failed={failed}")
         return
 
     raise RuntimeError(f"Unsupported OS for sandbox permissions: {os.name}")

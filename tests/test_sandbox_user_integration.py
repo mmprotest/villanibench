@@ -20,7 +20,7 @@ def test_prepare_sandbox_permissions(monkeypatch, tmp_path):
     task = _mk_task(tmp_path)
     out = tmp_path / "out"
     granted = {}
-    monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda ident, paths: granted.setdefault("paths", paths))
+    monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda ident, paths, log=None: granted.setdefault("paths", paths))
     sandbox, repo = prepare_sandbox(task, out, sandbox_identity=SandboxIdentity("villanibench_sandbox", None, True))
     assert (repo / "f.txt").exists()
     assert (sandbox / "tests" / "visible" / "test.txt").exists()

@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
+from villanibench.harness.adapters.external_cli import detect_venv_runner_diagnostics, redact_env_for_diagnostics
 from villanibench.harness.budget import get_budget_profile
 
 
@@ -122,3 +123,30 @@ def test_external_cli_resolves_executable_before_sandbox_launch(tmp_path: Path, 
     assert res.exit_code == 0
     assert seen["argv"][0] == "/usr/local/bin/villani-code"
     assert seen["sandbox_identity"] is not None
+
+
+def test_redact_env_for_diagnostics():
+    out = redact_env_for_diagnostics({
+        "PATH": "/a:/b",
+        "API_KEY": "secret",
+        "AUTH_TOKEN": "tok",
+        "TMP": "/tmp",
+    })
+    assert out["API_KEY"] == "<redacted>"
+    assert out["AUTH_TOKEN"] == "<redacted>"
+    assert out["PATH"] == "/a:/b"
+
+
+def test_detect_venv_runner_diagnostics(tmp_path: Path):
+    exe = tmp_path / ".venv" / "Scripts" / "villani-code.exe"
+    py = tmp_path / ".venv" / "Scripts" / "python.exe"
+    sp = tmp_path / ".venv" / "Lib" / "site-packages"
+    exe.parent.mkdir(parents=True)
+    sp.mkdir(parents=True)
+    exe.write_text("", encoding="utf-8")
+    py.write_text("", encoding="utf-8")
+    (sp / "editable.pth").write_text("x", encoding="utf-8")
+    lines = detect_venv_runner_diagnostics(exe)
+    assert lines
+    assert "python_exists=True" in lines[0]
+    assert "pth_files=1" in lines[0]
