@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import time
@@ -104,12 +105,41 @@ def _build_unicode_env_block(env: dict[str, str] | None) -> ctypes.Array[ctypes.
     block = "".join(f"{k}={v}\0" for k, v in sorted(env.items())) + "\0"
     return ctypes.create_unicode_buffer(block)
 
+
+def _normalize_cwd(cwd: Path | str) -> tuple[str, Path, bool, bool]:
+    cwd_raw = str(cwd)
+    if isinstance(cwd, Path):
+        cwd_resolved = cwd.resolve()
+    else:
+        cwd_resolved = Path(cwd_raw).resolve()
+    return cwd_raw, cwd_resolved, cwd_resolved.exists(), cwd_resolved.is_dir()
+
+
+def _resolve_executable_for_diagnostics(executable_raw: str, env: Mapping[str, str] | None) -> tuple[str, str | None, bool, bool]:
+    if not executable_raw:
+        return "", None, False, False
+    raw_path = Path(executable_raw)
+    if raw_path.is_absolute():
+        resolved = str(raw_path)
+    else:
+        path_for_which = (env or {}).get("PATH") or os.environ.get("PATH")
+        resolved = shutil.which(executable_raw, path=path_for_which)
+        if resolved is None and os.name == "nt":
+            system_root = (env or {}).get("SystemRoot") or os.environ.get("SystemRoot")
+            if system_root:
+                sys32_candidate = Path(system_root) / "System32" / executable_raw
+                if sys32_candidate.exists():
+                    resolved = str(sys32_candidate)
+    check_path = Path(resolved) if resolved else raw_path
+    return executable_raw, resolved, check_path.exists(), check_path.is_file()
+
 def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None, identity: SandboxIdentity) -> ProcessResult:
     if not identity.password:
         raise RuntimeError("Windows sandbox launch requires sandbox identity password.")
-    runner_tmp = cwd.parent / "runner_tmp"
+    cwd_raw, cwd_resolved, cwd_exists, cwd_is_dir = _normalize_cwd(cwd)
+    runner_tmp = cwd_resolved.parent / "runner_tmp"
     if not runner_tmp.exists():
-        runner_tmp = cwd / ".runner_tmp"
+        runner_tmp = cwd_resolved / ".runner_tmp"
     runner_tmp.mkdir(parents=True, exist_ok=True)
     stdout_path = runner_tmp / f"proc_out_{time.time_ns()}.log"
     stderr_path = runner_tmp / f"proc_err_{time.time_ns()}.log"
@@ -148,19 +178,21 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
     start = time.monotonic()
     timed_out = False
     try:
-        ok = advapi32.CreateProcessWithLogonW(identity.username, ".", identity.password, LOGON_WITH_PROFILE, None, ctypes.c_wchar_p(command_line), CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP, lp_environment, str(cwd), ctypes.byref(startup), ctypes.byref(pi))
+        ok = advapi32.CreateProcessWithLogonW(identity.username, ".", identity.password, LOGON_WITH_PROFILE, None, ctypes.c_wchar_p(command_line), CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_PROCESS_GROUP, lp_environment, str(cwd_resolved), ctypes.byref(startup), ctypes.byref(pi))
         if not ok:
             get_last_error = getattr(ctypes, "get_last_error", None)
             err_code = int(get_last_error() if get_last_error is not None else 0)
             win_err = ctypes.WinError(err_code) if hasattr(ctypes, "WinError") else OSError(err_code, "Windows error")
             exe_guess = _extract_executable_from_cmdline(command_line)
+            exe_raw, exe_resolved, exe_exists, exe_is_file = _resolve_executable_for_diagnostics(exe_guess, env)
             detail = (
                 f"Failed to launch sandboxed process as {identity.username}. "
                 f"GetLastError={err_code} WinError='{win_err.strerror}' "
-                f"command_line='{command_line}' executable='{exe_guess}' "
-                f"exists={Path(exe_guess).exists() if exe_guess else False} "
-                f"is_file={Path(exe_guess).is_file() if exe_guess else False} "
-                f"cwd='{cwd}' cwd_exists={cwd.exists()} env={_selected_env_summary(env)}"
+                f"command_line='{command_line}' executable_raw='{exe_raw}' "
+                f"executable_resolved_by_which='{exe_resolved}' "
+                f"executable_exists={exe_exists} executable_is_file={exe_is_file} "
+                f"cwd_raw='{cwd_raw}' cwd_resolved='{cwd_resolved}' "
+                f"cwd_exists={cwd_exists} cwd_is_dir={cwd_is_dir} env={_selected_env_summary(env)}"
             )
             print(f"[sandbox-launch] {detail}", flush=True)
             raise RuntimeError(detail)
@@ -206,8 +238,9 @@ def _selected_env_summary(env: Mapping[str, str] | None) -> dict[str, str]:
     return {k: env.get(k, "") for k in keys if env.get(k)}
 
 def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None = None, sandbox_identity: SandboxIdentity | None = None) -> ProcessResult:
+    _, cwd_resolved, _, _ = _normalize_cwd(cwd)
     start = time.monotonic()
-    kwargs = _popen_kwargs(cwd, env)
+    kwargs = _popen_kwargs(cwd_resolved, env)
     if sandbox_identity is None:
         proc = subprocess.Popen(command, shell=True, **kwargs)
         try:
@@ -219,7 +252,7 @@ def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str,
 
     if os.name == "nt":
         cmdline = subprocess.list2cmdline(["cmd.exe", "/d", "/s", "/c", command])
-        return _windows_create_process_with_logon(cmdline, cwd, timeout_sec, env, sandbox_identity)
+        return _windows_create_process_with_logon(cmdline, cwd_resolved, timeout_sec, env, sandbox_identity)
     if os.name == "posix" and os.uname().sysname == "Darwin":
         raise RuntimeError("macOS sandboxed subprocess launch is not implemented.")
     argv = _linux_prefix(sandbox_identity) + ["bash", "-lc", command]
@@ -232,8 +265,9 @@ def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str,
         return ProcessResult(124, out, err, True, time.monotonic() - start)
 
 def run_command_tree_argv(argv: list[str], cwd: Path, timeout_sec: float, env: dict[str, str] | None = None, stdin_text: str | None = None, sandbox_identity: SandboxIdentity | None = None) -> ProcessResult:
+    _, cwd_resolved, _, _ = _normalize_cwd(cwd)
     start = time.monotonic()
-    kwargs = _popen_kwargs(cwd, env)
+    kwargs = _popen_kwargs(cwd_resolved, env)
     cmd_argv = argv
     if sandbox_identity is not None:
         if os.name == "nt":
@@ -244,7 +278,7 @@ def run_command_tree_argv(argv: list[str], cwd: Path, timeout_sec: float, env: d
                 cmdline = subprocess.list2cmdline(["cmd.exe", "/d", "/s", "/c", wrapped])
             else:
                 cmdline = subprocess.list2cmdline(argv)
-            return _windows_create_process_with_logon(cmdline, cwd, timeout_sec, env, sandbox_identity)
+            return _windows_create_process_with_logon(cmdline, cwd_resolved, timeout_sec, env, sandbox_identity)
         if os.name == "posix" and os.uname().sysname == "Darwin":
             raise RuntimeError("macOS sandboxed subprocess launch is not implemented.")
         cmd_argv = _linux_prefix(sandbox_identity) + argv
