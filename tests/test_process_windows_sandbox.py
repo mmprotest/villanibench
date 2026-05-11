@@ -142,3 +142,13 @@ def test_resolve_executable_for_diagnostics_via_which(monkeypatch):
     assert raw == "sh"
     assert resolved == "/bin/sh"
     assert isinstance(exists, bool)
+
+
+def test_resolve_executable_for_diagnostics_strips_wrapping_quotes(tmp_path):
+    exe = tmp_path / "tool.exe"
+    exe.write_text("x")
+    raw, resolved, exists, is_file = p._resolve_executable_for_diagnostics(f'"{exe}"', {})
+    assert raw == str(exe)
+    assert resolved == str(exe)
+    assert exists is True
+    assert is_file is True

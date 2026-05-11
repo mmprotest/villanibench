@@ -5,7 +5,7 @@ import shlex
 from pathlib import Path
 from typing import Mapping
 
-from villanibench.harness.os_sandbox_user import sandbox_env
+from villanibench.harness.os_sandbox_user import grant_leaf_read_execute_access, grant_parent_traverse_access, sandbox_env
 from villanibench.harness.process import run_command_tree_argv
 
 from .common import resolve_executable_for_sandbox
@@ -101,6 +101,10 @@ class ExternalCliAdapter(RunnerAdapter):
                 print(f"[adapter:{self.name}] sandbox identity username={getattr(config.get('sandbox_identity'), 'username', None)} enabled={bool(config.get('sandbox_identity'))}", flush=True)
                 if venv_lines:
                     print(f"[adapter:{self.name}] {venv_lines[0]}", flush=True)
+                identity = config.get("sandbox_identity")
+                if identity is not None and hasattr(identity, "username"):
+                    prepare_sandbox_runner_access(self.name, identity, exe, env)
+                    smoke_sandbox_runner_access(self.name, identity, exe, cwd, env, budget.wall_time_sec)
                 diag_path.write_text("\n".join(diag_lines) + "\n", encoding="utf-8")
                 completed = run_command_tree_argv(
                     argv,
@@ -179,3 +183,84 @@ def detect_venv_runner_diagnostics(executable: Path) -> list[str]:
     return [
         f"venv detected path={venv_path} python_exists={python_exe.exists()} site_packages_exists={site_packages.exists()} entrypoint_exists={executable.exists()} pth_files={len(pth_files)} pth_names={[p.name for p in pth_files]}",
     ]
+
+
+def _detect_venv_root(executable: Path) -> Path | None:
+    parts = [p.lower() for p in executable.parts]
+    if "scripts" not in parts or (".venv" not in parts and "venv" not in parts):
+        return None
+    return Path(*executable.parts[:parts.index("scripts")])
+
+
+def parse_pth_paths(site_packages: Path) -> tuple[list[Path], list[str]]:
+    out: list[Path] = []
+    unresolved: list[str] = []
+    for pth in site_packages.glob("*.pth"):
+        for line in pth.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith("import"):
+                unresolved.append(f"{pth.name}: import hook not statically resolved")
+                continue
+            p = Path(s)
+            candidate = (pth.parent / p).resolve() if not p.is_absolute() else p.resolve()
+            if candidate.exists():
+                out.append(candidate)
+    return out, unresolved
+
+
+def prepare_sandbox_runner_access(adapter_name: str, identity, executable: Path, env: Mapping[str, str]) -> None:
+    print(f"[adapter:{adapter_name}] sandbox runner access prepare start username={identity.username}", flush=True)
+    grants: list[tuple[Path, str]] = [(executable, "runner_executable"), (executable.parent, "runner_executable_parent")]
+    venv_root = _detect_venv_root(executable)
+    unresolved: list[str] = []
+    if venv_root is not None:
+        site_packages = venv_root / "Lib" / "site-packages"
+        grants.extend([
+            (venv_root, "venv_root"),
+            (venv_root / "Scripts", "venv_scripts"),
+            (venv_root / "Lib", "venv_lib"),
+            (site_packages, "site_packages"),
+        ])
+        python_exe = venv_root / "Scripts" / "python.exe"
+        if python_exe.exists():
+            grants.append((python_exe, "venv_python"))
+        if site_packages.exists():
+            pth_paths, unresolved = parse_pth_paths(site_packages)
+            for path in pth_paths:
+                if venv_root not in path.parents and path != venv_root:
+                    grants.append((path, "editable_source"))
+    seen: set[Path] = set()
+    failed = 0
+    done = 0
+    for path, reason in grants:
+        rp = path.resolve()
+        if rp in seen or not rp.exists():
+            continue
+        seen.add(rp)
+        try:
+            grant_parent_traverse_access(identity, rp)
+            grant_leaf_read_execute_access(identity, rp)
+            done += 1
+            print(f"[adapter:{adapter_name}] sandbox runner access grant path={rp} mode=read_execute reason={reason}", flush=True)
+        except Exception as exc:
+            failed += 1
+            raise RuntimeError(f"sandbox runner access grant failed path={rp} reason={reason}: {exc}") from exc
+    for note in unresolved:
+        print(f"[adapter:{adapter_name}] sandbox runner access unresolved_pth {note}", flush=True)
+    print(f"[adapter:{adapter_name}] sandbox runner access prepare done grants={done} failed={failed}", flush=True)
+
+
+def smoke_sandbox_runner_access(adapter_name: str, identity, executable: Path, cwd: Path, env: Mapping[str, str], timeout_sec: float) -> None:
+    venv_root = _detect_venv_root(executable)
+    if venv_root is None:
+        return
+    python_exe = venv_root / "Scripts" / "python.exe"
+    if not python_exe.exists():
+        return
+    print(f"[adapter:{adapter_name}] sandbox runner smoke test start executable={python_exe}", flush=True)
+    result = run_command_tree_argv([str(python_exe), "-c", "import sys; print(sys.executable)"], cwd, min(timeout_sec, 20.0), env=dict(env), sandbox_identity=identity)
+    print(f"[adapter:{adapter_name}] sandbox runner smoke test done exit_code={result.exit_code} stdout={result.stdout.strip()}", flush=True)
+    if result.exit_code != 0:
+        raise RuntimeError(f"sandbox runner smoke test failed for {python_exe}: {result.stderr.strip()}")

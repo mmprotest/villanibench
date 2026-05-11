@@ -294,8 +294,9 @@ def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log:
 
 def sandbox_env(base_env: dict[str, str] | None, task_output_dir: Path) -> dict[str, str]:
     env = dict(base_env if base_env is not None else os.environ)
-    runner_home = task_output_dir / "runner_home"
-    runner_tmp = task_output_dir / "runner_tmp"
+    output_abs = task_output_dir.resolve()
+    runner_home = output_abs / "runner_home"
+    runner_tmp = output_abs / "runner_tmp"
     runner_home.mkdir(parents=True, exist_ok=True)
     runner_tmp.mkdir(parents=True, exist_ok=True)
     env["HOME"] = str(runner_home)
@@ -306,3 +307,24 @@ def sandbox_env(base_env: dict[str, str] | None, task_output_dir: Path) -> dict[
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
     return env
+
+
+def grant_leaf_read_execute_access(identity: SandboxIdentity, path: Path, log: Callable[[str], None] | None = None) -> None:
+    def _emit(msg: str) -> None:
+        if log is not None:
+            log(msg)
+
+    if os.name != "nt":
+        return
+    target = path.resolve()
+    grant = f"{identity.username}:(RX)" if target.is_file() else f"{identity.username}:(OI)(CI)RX"
+    cmd = ["icacls", str(target), "/grant", grant]
+    try:
+        _run_admin_command(cmd)
+        _emit(f"[sandbox-user] access grant done username={identity.username} path={target}")
+    except Exception as exc:
+        _emit(
+            f"[sandbox-user] access grant failed username={identity.username} kind=leaf_read_execute "
+            f"path={target} mode=read_execute timeout=20.0s command='{' '.join(cmd)}' error={exc}"
+        )
+        raise

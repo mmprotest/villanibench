@@ -5,9 +5,9 @@ from villanibench.harness import os_sandbox_user as m
 
 def test_sandbox_env_sets_task_local_dirs(tmp_path):
     env = m.sandbox_env({}, tmp_path)
-    assert env["HOME"] == str(tmp_path / "runner_home")
-    assert env["USERPROFILE"] == str(tmp_path / "runner_home")
-    assert env["TMP"] == str(tmp_path / "runner_tmp")
+    assert env["HOME"] == str((tmp_path / "runner_home").resolve())
+    assert env["USERPROFILE"] == str((tmp_path / "runner_home").resolve())
+    assert env["TMP"] == str((tmp_path / "runner_tmp").resolve())
 
 
 def test_sandbox_env_preserves_path(tmp_path):
