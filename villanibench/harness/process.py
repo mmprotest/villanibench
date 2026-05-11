@@ -85,64 +85,77 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
     if not runner_tmp.exists():
         runner_tmp = cwd / ".runner_tmp"
     runner_tmp.mkdir(parents=True, exist_ok=True)
+    stdout_path = runner_tmp / f"proc_out_{time.time_ns()}.log"
+    stderr_path = runner_tmp / f"proc_err_{time.time_ns()}.log"
 
-    stdout_tmp = tempfile.NamedTemporaryFile(delete=False, dir=runner_tmp, prefix="proc_out_", suffix=".log")
-    stderr_tmp = tempfile.NamedTemporaryFile(delete=False, dir=runner_tmp, prefix="proc_err_", suffix=".log")
-    stdout_tmp.close()
-    stderr_tmp.close()
+    lp_environment = None
+    if env is not None:
+        env_block = "".join(f"{k}={v}\0" for k, v in sorted(env.items())) + "\0"
+        lp_environment = ctypes.create_unicode_buffer(env_block)
 
-    startup = subprocess.STARTUPINFO()
-    startup.dwFlags |= subprocess.STARTF_USESTDHANDLES
-    stdout_handle = open(stdout_tmp.name, "wb")
-    stderr_handle = open(stderr_tmp.name, "wb")
-    startup.hStdOutput = stdout_handle.fileno()
-    startup.hStdError = stderr_handle.fileno()
-    startup.hStdInput = subprocess.DEVNULL
-
-    advapi32 = ctypes.windll.advapi32
-    advapi32.CreateProcessWithLogonW.restype = ctypes.c_int
-
-    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    startup = ctypes.STARTUPINFOW()
+    startup.cb = ctypes.sizeof(ctypes.STARTUPINFOW)
+    startup.dwFlags = 0
+    creationflags = 0x00000400
+    pi = ctypes.PROCESS_INFORMATION()
 
     start = time.monotonic()
+    kernel32 = ctypes.windll.kernel32
+    k32_CreateFileW = kernel32.CreateFileW
+    k32_CreateFileW.restype = ctypes.c_void_p
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 0x00000001
+    CREATE_ALWAYS = 2
+    FILE_ATTRIBUTE_NORMAL = 0x80
+    out_h = k32_CreateFileW(str(stdout_path), GENERIC_WRITE, FILE_SHARE_READ, None, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, None)
+    err_h = k32_CreateFileW(str(stderr_path), GENERIC_WRITE, FILE_SHARE_READ, None, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, None)
+    if out_h in (0, ctypes.c_void_p(-1).value) or err_h in (0, ctypes.c_void_p(-1).value):
+        raise RuntimeError("Failed to create output capture files for Windows sandbox process.")
+    startup.dwFlags |= 0x00000100
+    startup.hStdOutput = out_h
+    startup.hStdError = err_h
+    startup.hStdInput = kernel32.GetStdHandle(-10)
+
     try:
-        proc = subprocess.Popen(
-            command_line,
-            shell=False,
-            cwd=cwd,
-            env=env,
-            startupinfo=startup,
-            creationflags=creationflags,
-            executable=None,
-            text=False,
-            user=identity.username,
-            password=identity.password,
+        ok = ctypes.windll.advapi32.CreateProcessWithLogonW(
+            identity.username,
+            ".",
+            identity.password,
+            0x00000001,
+            None,
+            ctypes.c_wchar_p(command_line),
+            creationflags,
+            lp_environment,
+            str(cwd),
+            ctypes.byref(startup),
+            ctypes.byref(pi),
         )
-    except Exception as exc:
-        stdout_handle.close()
-        stderr_handle.close()
-        raise RuntimeError(f"Failed to launch sandboxed process as {identity.username}: {exc}") from exc
+        if not ok:
+            raise RuntimeError(f"Failed to launch sandboxed process as {identity.username}.")
 
-    try:
-        try:
-            proc.wait(timeout=timeout_sec)
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, **_subprocess_text_kwargs())
-            proc.wait(timeout=3)
+        wait_res = kernel32.WaitForSingleObject(pi.hProcess, int(timeout_sec * 1000))
+        timed_out = wait_res == 0x00000102
+        if timed_out:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pi.dwProcessId)], capture_output=True, **_subprocess_text_kwargs())
+            kernel32.WaitForSingleObject(pi.hProcess, 3000)
+            exit_code = 124
+        else:
+            code = ctypes.c_ulong(0)
+            kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(code))
+            exit_code = int(code.value)
     finally:
-        stdout_handle.close()
-        stderr_handle.close()
+        kernel32.CloseHandle(out_h)
+        kernel32.CloseHandle(err_h)
+        if pi.hThread:
+            kernel32.CloseHandle(pi.hThread)
+        if pi.hProcess:
+            kernel32.CloseHandle(pi.hProcess)
 
-    out = Path(stdout_tmp.name).read_text(encoding="utf-8", errors="replace") if Path(stdout_tmp.name).exists() else ""
-    err = Path(stderr_tmp.name).read_text(encoding="utf-8", errors="replace") if Path(stderr_tmp.name).exists() else ""
-
+    out = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path.exists() else ""
+    err = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.exists() else ""
     if timed_out:
-        msg = f"Command timed out after {timeout_sec:.1f}s and was terminated."
-        err = f"{err.rstrip()}\n{msg}".strip()
-        return ProcessResult(124, out, err, True, time.monotonic() - start)
-    return ProcessResult(proc.returncode or 0, out, err, False, time.monotonic() - start)
+        err = f"{err.rstrip()}\nCommand timed out after {timeout_sec:.1f}s and was terminated.".strip()
+    return ProcessResult(exit_code, out, err, timed_out, time.monotonic() - start)
 
 
 def run_command_tree(command: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None = None, sandbox_identity: SandboxIdentity | None = None) -> ProcessResult:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import secrets
 import shutil
@@ -19,18 +20,50 @@ class SandboxIdentity:
 
 
 def _generate_password(length: int = 32) -> str:
-    alphabet = string.ascii_letters + string.digits + "-_!@#$%^&*"
+    alphabet = string.ascii_letters + string.digits + "_.-"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+
+
+
+def _run_admin_command(
+    argv: list[str], *, timeout_sec: float = 20.0, allow_failure: bool = False, display_argv: list[str] | None = None
+) -> subprocess.CompletedProcess:
+    shown = display_argv or argv
+    shown_cmd = " ".join(shown)
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_sec,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Command '{shown[0]}' timed out after {timeout_sec:.1f}s.") from exc
+    if not allow_failure and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"Command failed ({shown_cmd}): {detail}")
+    return proc
+
+
+def _is_windows_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 
 def create_sandbox_identity() -> SandboxIdentity:
     password = _generate_password()
     if os.name == "nt":
-        subprocess.run(["net", "user", SANDBOX_USERNAME, "/delete"], check=False, capture_output=True, text=True)
-        try:
-            subprocess.run(["net", "user", SANDBOX_USERNAME, password, "/add", "/Y"], check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError:
-            subprocess.run(["net", "user", SANDBOX_USERNAME, password, "/add"], check=True, capture_output=True, text=True)
+        if not _is_windows_admin():
+            raise RuntimeError("Creating sandbox user 'villanibench_sandbox' requires an elevated Administrator shell on Windows.")
+        _run_admin_command(["net", "user", SANDBOX_USERNAME, "/delete"], allow_failure=True)
+        _run_admin_command(
+            ["net", "user", SANDBOX_USERNAME, password, "/add"],
+            display_argv=["net", "user", SANDBOX_USERNAME, "<redacted>", "/add"],
+        )
         return SandboxIdentity(username=SANDBOX_USERNAME, password=password, created=True)
 
     if os.name == "posix":
@@ -52,7 +85,7 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
     if not identity.created:
         return
     if os.name == "nt":
-        proc = subprocess.run(["net", "user", identity.username, "/delete"], check=False, capture_output=True, text=True)
+        proc = _run_admin_command(["net", "user", identity.username, "/delete"], allow_failure=True)
     elif os.name == "posix":
         proc = subprocess.run(["userdel", "-r", identity.username], check=False, capture_output=True, text=True)
     else:
@@ -66,12 +99,7 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
 def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path]) -> None:
     if os.name == "nt":
         for path in paths:
-            subprocess.run(
-                ["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            _run_admin_command(["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"])
         return
 
     if os.name == "posix":
