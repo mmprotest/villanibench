@@ -17,7 +17,7 @@ def test_claude_code_uses_argv_and_permission_bypass(monkeypatch, tmp_path: Path
 
     seen = {}
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["argv"] = argv
         seen["cwd"] = cwd
         seen["env"] = env or {}
@@ -51,7 +51,7 @@ def test_claude_code_sets_anthropic_env_vars(monkeypatch, tmp_path: Path):
 
     seen = {}
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["env"] = env or {}
 
         class R:

@@ -54,7 +54,7 @@ def test_command_and_redaction_and_timeout(monkeypatch, tmp_path: Path):
 
     seen = {}
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["argv"] = argv
         seen["env"] = env or {}
 

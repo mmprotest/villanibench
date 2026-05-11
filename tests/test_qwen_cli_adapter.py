@@ -47,7 +47,7 @@ def test_qwen_writes_settings_and_argv_and_env(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr("villanibench.harness.adapters.qwen_cli._resolve_qwen_executable", lambda: "/usr/bin/qwen")
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["argv"] = argv
         seen["cwd"] = cwd
         seen["env"] = env or {}
@@ -107,7 +107,7 @@ def test_qwen_timeout_bubbles(monkeypatch, tmp_path: Path):
     out.mkdir()
     monkeypatch.setattr("villanibench.harness.adapters.qwen_cli._resolve_qwen_executable", lambda: "qwen")
 
-    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None):
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         class R:
             exit_code = 124
             stdout = ""
