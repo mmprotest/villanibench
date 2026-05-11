@@ -118,20 +118,21 @@ def _normalize_cwd(cwd: Path | str) -> tuple[str, Path, bool, bool]:
 def _resolve_executable_for_diagnostics(executable_raw: str, env: Mapping[str, str] | None) -> tuple[str, str | None, bool, bool]:
     if not executable_raw:
         return "", None, False, False
-    raw_path = Path(executable_raw)
+    cleaned = executable_raw.strip().strip('"').strip("'")
+    raw_path = Path(cleaned)
     if raw_path.is_absolute():
         resolved = str(raw_path)
     else:
         path_for_which = (env or {}).get("PATH") or os.environ.get("PATH")
-        resolved = shutil.which(executable_raw, path=path_for_which)
+        resolved = shutil.which(cleaned, path=path_for_which)
         if resolved is None and os.name == "nt":
             system_root = (env or {}).get("SystemRoot") or os.environ.get("SystemRoot")
             if system_root:
-                sys32_candidate = Path(system_root) / "System32" / executable_raw
+                sys32_candidate = Path(system_root) / "System32" / cleaned
                 if sys32_candidate.exists():
                     resolved = str(sys32_candidate)
     check_path = Path(resolved) if resolved else raw_path
-    return executable_raw, resolved, check_path.exists(), check_path.is_file()
+    return cleaned, resolved, check_path.exists(), check_path.is_file()
 
 def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec: float, env: dict[str, str] | None, identity: SandboxIdentity) -> ProcessResult:
     if not identity.password:

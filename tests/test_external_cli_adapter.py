@@ -3,7 +3,13 @@ import subprocess
 from pathlib import Path
 
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
-from villanibench.harness.adapters.external_cli import detect_venv_runner_diagnostics, redact_env_for_diagnostics
+from villanibench.harness.adapters.external_cli import (
+    _detect_venv_root,
+    detect_venv_runner_diagnostics,
+    parse_pth_paths,
+    prepare_sandbox_runner_access,
+    redact_env_for_diagnostics,
+)
 from villanibench.harness.budget import get_budget_profile
 
 
@@ -150,3 +156,37 @@ def test_detect_venv_runner_diagnostics(tmp_path: Path):
     assert lines
     assert "python_exists=True" in lines[0]
     assert "pth_files=1" in lines[0]
+
+
+def test_detect_venv_root_from_scripts_path(tmp_path: Path):
+    exe = tmp_path / ".venv" / "Scripts" / "tool.exe"
+    assert _detect_venv_root(exe) == (tmp_path / ".venv")
+
+
+def test_parse_pth_paths_absolute_and_ignore_import(tmp_path: Path):
+    sp = tmp_path / ".venv" / "Lib" / "site-packages"
+    sp.mkdir(parents=True)
+    src = tmp_path / "srcpkg"
+    src.mkdir()
+    (sp / "a.pth").write_text(f"# hi\n{src}\nimport x\n\n", encoding="utf-8")
+    paths, unresolved = parse_pth_paths(sp)
+    assert src in paths
+    assert unresolved and "import hook" in unresolved[0]
+
+
+def test_prepare_sandbox_runner_access_plans_read_execute(monkeypatch, tmp_path: Path):
+    exe = tmp_path / ".venv" / "Scripts" / "tool.exe"
+    sp = tmp_path / ".venv" / "Lib" / "site-packages"
+    src = tmp_path / "editable_src"
+    exe.parent.mkdir(parents=True)
+    sp.mkdir(parents=True)
+    src.mkdir()
+    exe.write_text("", encoding="utf-8")
+    (tmp_path / ".venv" / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    (sp / "ed.pth").write_text(str(src), encoding="utf-8")
+    calls = []
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.grant_parent_traverse_access", lambda ident, path: calls.append(("parent", path)))
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.grant_leaf_read_execute_access", lambda ident, path: calls.append(("leaf", path)))
+    prepare_sandbox_runner_access("villani", type("I", (), {"username": "u"})(), exe, {})
+    assert any(kind == "leaf" and p == sp for kind, p in calls)
+    assert any(kind == "leaf" and p == src for kind, p in calls)
