@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
 from villanibench.harness.os_sandbox_user import sandbox_env
-from villanibench.harness.process import run_command_tree
+from villanibench.harness.process import run_command_tree_argv
 
+from .common import resolve_executable_for_sandbox
 from .base import AdapterRunResult, RunnerAdapter, now_iso
 
 
@@ -52,8 +54,7 @@ class ExternalCliAdapter(RunnerAdapter):
             visible_test_command=str(task.visible_test_command),
         )
         env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
-        env["PYTHONIOENCODING"] = "utf-8"
-        env["PYTHONUTF8"] = "1"
+        argv: list[str] = []
 
         started = now_iso()
         timed_out = False
@@ -61,8 +62,18 @@ class ExternalCliAdapter(RunnerAdapter):
         exit_code = 0
         with stdout_path.open("w", encoding="utf-8") as out, stderr_path.open("w", encoding="utf-8") as err:
             try:
-                completed = run_command_tree(
-                    command,
+                try:
+                    argv = shlex.split(command, posix=(os.name != "nt"))
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "Unable to parse command template for sandboxed execution. "
+                        "Provide an absolute executable path in command_template."
+                    ) from exc
+                if not argv:
+                    raise RuntimeError("Command template produced an empty command.")
+                argv[0] = resolve_executable_for_sandbox(argv[0], env)
+                completed = run_command_tree_argv(
+                    argv,
                     cwd,
                     budget.wall_time_sec,
                     env=env,

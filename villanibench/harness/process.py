@@ -203,7 +203,13 @@ def run_command_tree_argv(argv: list[str], cwd: Path, timeout_sec: float, env: d
     cmd_argv = argv
     if sandbox_identity is not None:
         if os.name == "nt":
-            cmdline = subprocess.list2cmdline(argv)
+            if argv and argv[0].lower().endswith((".cmd", ".bat")):
+                wrapped = f'"{argv[0]}"'
+                if len(argv) > 1:
+                    wrapped = f"{wrapped} {subprocess.list2cmdline(argv[1:])}"
+                cmdline = subprocess.list2cmdline(["cmd.exe", "/d", "/s", "/c", wrapped])
+            else:
+                cmdline = subprocess.list2cmdline(argv)
             return _windows_create_process_with_logon(cmdline, cwd, timeout_sec, env, sandbox_identity)
         if os.name == "posix" and os.uname().sysname == "Darwin":
             raise RuntimeError("macOS sandboxed subprocess launch is not implemented.")

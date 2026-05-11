@@ -57,3 +57,21 @@ def test_windows_timeout_calls_taskkill(monkeypatch, tmp_path):
     r = p._windows_create_process_with_logon("cmd /c echo hi", tmp_path, 0.1, {}, SandboxIdentity("villanibench_sandbox", "pw"))
     assert r.timed_out is True
     assert any(cmd[:2] == ["taskkill", "/F"] for cmd in calls)
+
+
+def test_windows_cmd_executable_wrapped_for_createprocess(monkeypatch, tmp_path):
+    monkeypatch.setattr(p.os, "name", "nt")
+    monkeypatch.setattr(p.subprocess, "CREATE_NEW_PROCESS_GROUP", 0, raising=False)
+    seen = {}
+
+    def fake(command_line, cwd, timeout_sec, env, identity):
+        seen["command_line"] = command_line
+        return p.ProcessResult(0, "", "", False, 0.1)
+
+    monkeypatch.setattr(p, "_windows_create_process_with_logon", fake)
+    p.run_command_tree_argv([r"C:\tools\villani-code.cmd", "run", "--repo", "x"], tmp_path, 1.0, sandbox_identity=SandboxIdentity("villanibench_sandbox", "pw"))
+    assert "cmd.exe" in seen["command_line"]
+    assert "/d" in seen["command_line"]
+    assert "/s" in seen["command_line"]
+    assert "/c" in seen["command_line"]
+    assert "villani-code.cmd" in seen["command_line"]
