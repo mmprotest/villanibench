@@ -10,7 +10,7 @@ from villanibench.harness.adapters import build_adapter
 from villanibench.harness.budget import get_budget_profile
 from villanibench.harness.diff_analysis import analyze_diff, snapshot_files
 from villanibench.harness.notes import append_note
-from villanibench.harness.os_sandbox_user import cleanup_sandbox_identity, create_sandbox_identity
+from villanibench.harness.os_sandbox_user import build_sandbox_workdir, cleanup_sandbox_identity, create_sandbox_identity, grant_task_sandbox_access
 from villanibench.harness.process import run_command_tree, run_command_tree_argv
 from villanibench.harness.result_schema import TaskResult
 from villanibench.harness.sandbox import copy_hidden_tests_to_sandbox_for_evaluation, prepare_sandbox
@@ -81,11 +81,16 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
         _log("[run] sandbox user create done username=villanibench_sandbox")
         _log(f"[run] sandbox mode enabled={sandbox_identity is not None} username={getattr(sandbox_identity, 'username', None)}")
         if sandbox_identity is not None:
-            _log(f"[run] sandbox launch smoke test start username={sandbox_identity.username}")
-            smoke = run_command_tree_argv(["cmd.exe", "/c", "whoami"] if __import__("os").name == "nt" else ["whoami"], output_dir, 15, sandbox_identity=sandbox_identity)
-            _log(f"[run] sandbox launch smoke test done exit_code={smoke.exit_code} stdout={smoke.stdout.strip()[:120]} stderr={smoke.stderr.strip()[:120]}")
+            sandbox_workdir = build_sandbox_workdir(output_dir, run_id)
+            _log(f"[run] sandbox workdir create path={sandbox_workdir}")
+            sandbox_workdir.mkdir(parents=True, exist_ok=True)
+            _log(f"[run] sandbox workdir access grant username={sandbox_identity.username} path={sandbox_workdir} mode=modify")
+            grant_task_sandbox_access(sandbox_identity, [sandbox_workdir], log=_log)
+            _log(f"[run] sandbox launch smoke test start stage=base username={sandbox_identity.username} cwd={sandbox_workdir}")
+            smoke = run_command_tree_argv(["cmd.exe", "/c", "whoami"] if __import__("os").name == "nt" else ["whoami"], sandbox_workdir, 15, sandbox_identity=sandbox_identity)
+            _log(f"[run] sandbox launch smoke test done stage=base exit_code={smoke.exit_code} stdout={smoke.stdout.strip()[:120]} stderr={smoke.stderr.strip()[:120]}")
             if smoke.exit_code != 0:
-                msg = f"[run] sandbox launch smoke test failed: exit_code={smoke.exit_code} stderr={smoke.stderr.strip()[:300]}"
+                msg = f"[run] sandbox launch smoke test failed: stage=base exit_code={smoke.exit_code} stderr={smoke.stderr.strip()[:300]}"
                 _log(msg)
                 raise RuntimeError(msg)
         for task_index, task in enumerate(tasks, start=1):
@@ -107,6 +112,12 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
             )
             try:
                 sandbox, _repo = prepare_sandbox(task, task_output, sandbox_identity=sandbox_identity, log=_log)
+                if sandbox_identity is not None:
+                    _log(f"[run] sandbox launch smoke test start stage=task-workspace username={sandbox_identity.username} cwd={sandbox}")
+                    smoke_task = run_command_tree_argv(["cmd.exe", "/c", "whoami"] if __import__("os").name == "nt" else ["whoami"], sandbox, 15, sandbox_identity=sandbox_identity)
+                    _log(f"[run] sandbox launch smoke test done stage=task-workspace exit_code={smoke_task.exit_code} stdout={smoke_task.stdout.strip()[:120]} stderr={smoke_task.stderr.strip()[:120]}")
+                    if smoke_task.exit_code != 0:
+                        raise RuntimeError(f"[run] sandbox launch smoke test failed: stage=task-workspace exit_code={smoke_task.exit_code} stderr={smoke_task.stderr.strip()[:300]}")
                 test_timeout_sec = resolve_test_command_timeout_sec(budget.wall_time_sec)
                 pre_visible = run_cmd(task.visible_test_command, sandbox, timeout_sec=test_timeout_sec)
                 _log(
