@@ -61,7 +61,7 @@ def test_external_cli_sets_utf8_env(tmp_path: Path, monkeypatch):
     out.mkdir()
     seen = {}
 
-    def _fake_run_command_tree(command, cwd, timeout_sec, env=None, sandbox_identity=None):
+    def _fake_run_command_tree(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
         seen["env"] = env or {}
         class R:
             exit_code = 0
@@ -70,7 +70,7 @@ def test_external_cli_sets_utf8_env(tmp_path: Path, monkeypatch):
             timed_out = False
         return R()
 
-    monkeypatch.setattr("villanibench.harness.adapters.external_cli.run_command_tree", _fake_run_command_tree)
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.run_command_tree_argv", _fake_run_command_tree)
     adapter = ExternalCliAdapter("fake", "echo hi")
     res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {"task_output_dir": str(out), "model": "m"})
     assert res.exit_code == 0
@@ -89,3 +89,36 @@ def test_external_cli_usage_error_adds_note(tmp_path: Path):
     assert res.runner_crashed is True
     assert res.notes is not None
     assert "External runner command appears invalid" in res.notes
+
+
+def test_external_cli_resolves_executable_before_sandbox_launch(tmp_path: Path, monkeypatch):
+    sandbox = tmp_path / "sandbox"
+    (sandbox / "repo").mkdir(parents=True)
+    (sandbox / "prompt.txt").write_text("x", encoding="utf-8")
+    out = tmp_path / "out"
+    out.mkdir()
+    seen = {}
+
+    monkeypatch.setattr(
+        "villanibench.harness.adapters.external_cli.resolve_executable_for_sandbox",
+        lambda cmd, env=None: "/usr/local/bin/villani-code",
+    )
+
+    def _fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
+        seen["argv"] = argv
+        seen["sandbox_identity"] = sandbox_identity
+        class R:
+            exit_code = 0
+            stdout = ""
+            stderr = ""
+            timed_out = False
+        return R()
+
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.run_command_tree_argv", _fake_run)
+    adapter = ExternalCliAdapter("villani", 'villani-code run --repo "{cwd}" "{prompt_text}"')
+    res = adapter.run(T(), sandbox, get_budget_profile("lite_v0_1"), {
+        "task_output_dir": str(out), "model": "m", "sandbox_identity": object()
+    })
+    assert res.exit_code == 0
+    assert seen["argv"][0] == "/usr/local/bin/villani-code"
+    assert seen["sandbox_identity"] is not None

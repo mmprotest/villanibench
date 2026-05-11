@@ -10,6 +10,11 @@ def test_sandbox_env_sets_task_local_dirs(tmp_path):
     assert env["TMP"] == str(tmp_path / "runner_tmp")
 
 
+def test_sandbox_env_preserves_path(tmp_path):
+    env = m.sandbox_env({"PATH": "C:/tool/bin"}, tmp_path)
+    assert env["PATH"] == "C:/tool/bin"
+
+
 def test_create_identity_windows_admin_preflight(monkeypatch):
     monkeypatch.setattr(m.os, "name", "nt")
     monkeypatch.setattr(m, "_is_windows_admin", lambda: False)
