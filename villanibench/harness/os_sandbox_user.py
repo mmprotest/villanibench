@@ -8,8 +8,29 @@ import string
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 SANDBOX_USERNAME = "villanibench_sandbox"
+
+USER_PRIV_USER = 1
+UF_SCRIPT = 0x0001
+UF_NORMAL_ACCOUNT = 0x0200
+UF_DONT_EXPIRE_PASSWD = 0x10000
+NERR_Success = 0
+NERR_UserNotFound = 2221
+
+
+class USER_INFO_1(ctypes.Structure):
+    _fields_ = [
+        ("usri1_name", ctypes.c_wchar_p),
+        ("usri1_password", ctypes.c_wchar_p),
+        ("usri1_password_age", ctypes.c_uint32),
+        ("usri1_priv", ctypes.c_uint32),
+        ("usri1_home_dir", ctypes.c_wchar_p),
+        ("usri1_comment", ctypes.c_wchar_p),
+        ("usri1_flags", ctypes.c_uint32),
+        ("usri1_script_path", ctypes.c_wchar_p),
+    ]
 
 
 @dataclass
@@ -22,8 +43,6 @@ class SandboxIdentity:
 def _generate_password(length: int = 32) -> str:
     alphabet = string.ascii_letters + string.digits + "_.-"
     return "".join(secrets.choice(alphabet) for _ in range(length))
-
-
 
 
 def _run_admin_command(
@@ -54,16 +73,64 @@ def _is_windows_admin() -> bool:
     except Exception:
         return False
 
-def create_sandbox_identity() -> SandboxIdentity:
+
+def _netapi32():
+    return ctypes.windll.netapi32
+
+
+def _windows_user_exists(username: str) -> bool:
+    bufptr = ctypes.c_void_p()
+    status = _netapi32().NetUserGetInfo(None, username, 1, ctypes.byref(bufptr))
+    try:
+        if status == NERR_Success:
+            return True
+        if status == NERR_UserNotFound:
+            return False
+        raise RuntimeError(f"NetUserGetInfo failed for '{username}' with status {status}.")
+    finally:
+        if bufptr.value:
+            _netapi32().NetApiBufferFree(bufptr)
+
+
+def create_sandbox_identity(log: Callable[[str], None] | None = None) -> SandboxIdentity:
+    def _emit(msg: str) -> None:
+        if log is not None:
+            log(msg)
+
     password = _generate_password()
     if os.name == "nt":
+        _emit(f"[sandbox-user] admin check start username={SANDBOX_USERNAME}")
         if not _is_windows_admin():
             raise RuntimeError("Creating sandbox user 'villanibench_sandbox' requires an elevated Administrator shell on Windows.")
-        _run_admin_command(["net", "user", SANDBOX_USERNAME, "/delete"], allow_failure=True)
-        _run_admin_command(
-            ["net", "user", SANDBOX_USERNAME, password, "/add"],
-            display_argv=["net", "user", SANDBOX_USERNAME, "<redacted>", "/add"],
+        _emit(f"[sandbox-user] admin check done username={SANDBOX_USERNAME}")
+
+        _emit(f"[sandbox-user] stale delete start username={SANDBOX_USERNAME} method=netapi32")
+        delete_status = _netapi32().NetUserDel(None, SANDBOX_USERNAME)
+        _emit(f"[sandbox-user] stale delete done username={SANDBOX_USERNAME} method=netapi32 status={delete_status}")
+        if delete_status not in (NERR_Success, NERR_UserNotFound):
+            raise RuntimeError(f"Failed stale sandbox-user delete for '{SANDBOX_USERNAME}' with status {delete_status}.")
+
+        info = USER_INFO_1(
+            usri1_name=SANDBOX_USERNAME,
+            usri1_password=password,
+            usri1_password_age=0,
+            usri1_priv=USER_PRIV_USER,
+            usri1_home_dir=None,
+            usri1_comment=None,
+            usri1_flags=UF_SCRIPT | UF_NORMAL_ACCOUNT | UF_DONT_EXPIRE_PASSWD,
+            usri1_script_path=None,
         )
+        param_err = ctypes.c_uint32(0)
+        _emit(f"[sandbox-user] create start username={SANDBOX_USERNAME} method=netapi32")
+        create_status = _netapi32().NetUserAdd(None, 1, ctypes.byref(info), ctypes.byref(param_err))
+        _emit(f"[sandbox-user] create done username={SANDBOX_USERNAME} method=netapi32 status={create_status}")
+        if create_status != NERR_Success:
+            raise RuntimeError(f"NetUserAdd failed for '{SANDBOX_USERNAME}' with status {create_status} (param_err={param_err.value}).")
+
+        _emit(f"[sandbox-user] verify start username={SANDBOX_USERNAME} method=netapi32")
+        if not _windows_user_exists(SANDBOX_USERNAME):
+            raise RuntimeError(f"NetUserAdd reported success but user '{SANDBOX_USERNAME}' was not found.")
+        _emit(f"[sandbox-user] verify done username={SANDBOX_USERNAME} method=netapi32")
         return SandboxIdentity(username=SANDBOX_USERNAME, password=password, created=True)
 
     if os.name == "posix":
@@ -85,15 +152,17 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
     if not identity.created:
         return
     if os.name == "nt":
-        proc = _run_admin_command(["net", "user", identity.username, "/delete"], allow_failure=True)
-    elif os.name == "posix":
-        proc = subprocess.run(["userdel", "-r", identity.username], check=False, capture_output=True, text=True)
-    else:
-        print(f"WARNING: could not cleanup sandbox user {identity.username}: unsupported OS")
+        status = _netapi32().NetUserDel(None, identity.username)
+        if status not in (NERR_Success, NERR_UserNotFound):
+            print(f"WARNING: failed to delete sandbox user {identity.username}: netapi32 status={status}")
         return
-    if proc.returncode != 0:
-        reason = (proc.stderr or proc.stdout or "unknown error").strip()
-        print(f"WARNING: failed to delete sandbox user {identity.username}: {reason}")
+    if os.name == "posix":
+        proc = subprocess.run(["userdel", "-r", identity.username], check=False, capture_output=True, text=True)
+        if proc.returncode != 0:
+            reason = (proc.stderr or proc.stdout or "unknown error").strip()
+            print(f"WARNING: failed to delete sandbox user {identity.username}: {reason}")
+        return
+    print(f"WARNING: could not cleanup sandbox user {identity.username}: unsupported OS")
 
 
 def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path]) -> None:

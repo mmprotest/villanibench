@@ -77,7 +77,7 @@ def run_suite(suite_dir: Path, runner: str, model: str, output_dir: Path, config
     sandbox_identity = None
     try:
         _log("[run] sandbox user create start username=villanibench_sandbox")
-        sandbox_identity = create_sandbox_identity()
+        sandbox_identity = create_sandbox_identity(log=_log)
         _log("[run] sandbox user create done username=villanibench_sandbox")
         for task_index, task in enumerate(tasks, start=1):
             _log(f"[task {task_index}/{len(tasks)}] start task_id={task.id}")
