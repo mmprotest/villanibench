@@ -137,16 +137,26 @@ def test_icacls_calls_bounded_helper(monkeypatch, tmp_path):
 
 
 def test_build_sandbox_workdir_is_absolute(tmp_path, monkeypatch):
+    monkeypatch.setattr(m.os, "name", "posix")
     monkeypatch.setattr(m.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
     out = m.build_sandbox_workdir(Path("relative/out"), "rid-1")
     assert out.is_absolute()
     assert "villanibench" in str(out)
 
 
+def test_build_sandbox_workdir_windows_fallback(monkeypatch):
+    monkeypatch.setattr(m.os, "name", "nt")
+    monkeypatch.delenv("ProgramData", raising=False)
+    monkeypatch.setattr(m, "Path", lambda s: __import__("pathlib").PosixPath(str(s).replace("C:/", "/c/")))
+    out = m.build_sandbox_workdir(Path("relative/out"), "rid-2")
+    assert "villanibench_sandbox" in str(out)
+
+
 def test_parent_dirs_for_traverse_order(tmp_path):
     leaf = tmp_path / "a" / "b" / "c"
-    parents = m.parent_dirs_for_traverse(leaf)
+    parents = m.parent_dirs_for_traverse(leaf, stop_at=tmp_path / "a")
     assert parents
+    assert parents[0] == (tmp_path / "a")
     assert parents[-1] == leaf.parent
 
 
@@ -154,6 +164,54 @@ def test_grant_parent_traverse_access_windows(monkeypatch, tmp_path):
     monkeypatch.setattr(m.os, "name", "nt")
     calls = []
     monkeypatch.setattr(m, "_run_admin_command", lambda argv, **kwargs: calls.append(argv) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})())
-    m.grant_parent_traverse_access(m.SandboxIdentity(username="villanibench_sandbox", password="x"), tmp_path / "one" / "two")
+    m.grant_parent_traverse_access(m.SandboxIdentity(username="villanibench_sandbox", password="x"), tmp_path / "one" / "two", sandbox_root=tmp_path / "one")
     assert calls
     assert all(":(RX)" in " ".join(cmd) for cmd in calls)
+    assert all("/T" not in cmd and "/C" not in cmd for cmd in calls)
+
+
+def test_profile_root_is_blocked_for_parent_traverse(monkeypatch):
+    monkeypatch.setattr(m.os, "name", "nt")
+    monkeypatch.setattr(m, "parent_dirs_for_traverse", lambda *_a, **_k: [Path(r"C:/Users/Simon")])
+    try:
+        m.grant_parent_traverse_access(
+            m.SandboxIdentity(username="villanibench_sandbox", password="x"),
+            Path("/tmp/irrelevant"),
+            sandbox_root=Path("/tmp"),
+        )
+        assert False
+    except RuntimeError as exc:
+        assert "Refusing parent traverse ACL grant" in str(exc)
+
+
+def test_leaf_grant_targets_only_leaf(monkeypatch):
+    monkeypatch.setattr(m.os, "name", "nt")
+    calls = []
+    monkeypatch.setattr(m, "_run_admin_command", lambda argv, **kwargs: calls.append(argv) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})())
+    leaf = Path(r"C:\ProgramData\villanibench\sandbox\rid")
+    m.grant_leaf_modify_access(m.SandboxIdentity(username="villanibench_sandbox", password="x"), leaf)
+    assert calls == [["icacls", str(leaf), "/grant", "villanibench_sandbox:(OI)(CI)M"]]
+
+
+def test_diagnostic_includes_kind_timeout_and_command(monkeypatch, tmp_path):
+    monkeypatch.setattr(m.os, "name", "nt")
+    logs = []
+
+    def boom(_argv, **_kwargs):
+        raise RuntimeError("Command 'icacls' timed out after 20.0s.")
+
+    monkeypatch.setattr(m, "_run_admin_command", boom)
+    try:
+        m.grant_parent_traverse_access(
+            m.SandboxIdentity(username="villanibench_sandbox", password="x"),
+            tmp_path / "a" / "b",
+            sandbox_root=tmp_path / "a",
+            log=logs.append,
+        )
+        assert False
+    except RuntimeError:
+        pass
+    joined = "\n".join(logs)
+    assert "kind=parent_traverse" in joined
+    assert "timeout=20.0s" in joined
+    assert "command='icacls" in joined

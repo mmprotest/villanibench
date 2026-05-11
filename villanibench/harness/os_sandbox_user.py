@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PureWindowsPath
 from typing import Callable
 
 SANDBOX_USERNAME = "villanibench_sandbox"
@@ -169,32 +170,91 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
 
 
 def build_sandbox_workdir(output_dir: Path, run_id: str) -> Path:
-    root = Path(tempfile.gettempdir()) / "villanibench" / "sandbox"
+    if os.name == "nt":
+        program_data = os.environ.get("ProgramData")
+        if program_data:
+            root = Path(program_data) / "villanibench" / "sandbox"
+        else:
+            root = Path("C:/villanibench_sandbox")
+    else:
+        root = Path(tempfile.gettempdir()) / "villanibench" / "sandbox"
     return (root / run_id).resolve()
 
 
-def parent_dirs_for_traverse(path: Path) -> list[Path]:
+def parent_dirs_for_traverse(path: Path, *, stop_at: Path | None = None) -> list[Path]:
     resolved = path.resolve()
-    parents = list(resolved.parents)
+    if stop_at is None:
+        parents = list(resolved.parents)
+    else:
+        stop = stop_at.resolve()
+        if stop not in resolved.parents:
+            raise RuntimeError(f"Path '{resolved}' is not under sandbox root '{stop}'.")
+        parents = []
+        cur = resolved.parent
+        while True:
+            parents.append(cur)
+            if cur == stop:
+                break
+            cur = cur.parent
     parents.reverse()
     return parents
 
 
-def grant_parent_traverse_access(identity: SandboxIdentity, path: Path, log: Callable[[str], None] | None = None) -> None:
+def _is_blocked_profile_root(path: Path) -> bool:
+    if os.name != "nt":
+        return False
+    parts = [p.lower() for p in PureWindowsPath(str(path)).parts]
+    if len(parts) < 3:
+        return False
+    # C:\Users\<name>
+    if parts[1] == "users" and len(parts) == 3:
+        return True
+    # C:\Users\<name>\OneDrive or ...\Documents
+    if parts[1] == "users" and len(parts) == 4 and parts[3] in {"onedrive", "documents"}:
+        return True
+    return False
+
+
+def grant_parent_traverse_access(identity: SandboxIdentity, path: Path, *, sandbox_root: Path | None = None, log: Callable[[str], None] | None = None) -> None:
     def _emit(msg: str) -> None:
         if log is not None:
             log(msg)
 
     if os.name != "nt":
         return
-    for parent in parent_dirs_for_traverse(path):
+    for parent in parent_dirs_for_traverse(path, stop_at=sandbox_root):
+        if _is_blocked_profile_root(parent):
+            raise RuntimeError(f"Refusing parent traverse ACL grant on profile root '{parent}'.")
         _emit(f"[sandbox-user] access grant start username={identity.username} path={parent} mode=read_execute")
+        cmd = ["icacls", str(parent), "/grant", f"{identity.username}:(RX)"]
         try:
-            _run_admin_command(["icacls", str(parent), "/grant", f"{identity.username}:(RX)", "/C"])
+            _run_admin_command(cmd)
             _emit(f"[sandbox-user] access grant done username={identity.username} path={parent}")
         except Exception as exc:
-            _emit(f"[sandbox-user] access grant failed username={identity.username} path={parent} error={exc}")
+            _emit(
+                f"[sandbox-user] access grant failed username={identity.username} kind=parent_traverse "
+                f"path={parent} mode=read_execute timeout=20.0s command='{' '.join(cmd)}' error={exc}"
+            )
             raise
+
+
+def grant_leaf_modify_access(identity: SandboxIdentity, path: Path, log: Callable[[str], None] | None = None) -> None:
+    def _emit(msg: str) -> None:
+        if log is not None:
+            log(msg)
+
+    if os.name != "nt":
+        return
+    cmd = ["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M"]
+    try:
+        _run_admin_command(cmd)
+        _emit(f"[sandbox-user] access grant done username={identity.username} path={path}")
+    except Exception as exc:
+        _emit(
+            f"[sandbox-user] access grant failed username={identity.username} kind=leaf_modify "
+            f"path={path} mode=modify timeout=20.0s command='{' '.join(cmd)}' error={exc}"
+        )
+        raise
 
 def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log: Callable[[str], None] | None = None) -> None:
     def _emit(msg: str) -> None:
@@ -205,9 +265,8 @@ def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log:
         for path in paths:
             _emit(f"[sandbox-user] access grant start username={identity.username} path={path} mode=modify")
             try:
-                grant_parent_traverse_access(identity, path, log=log)
-                _run_admin_command(["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"])
-                _emit(f"[sandbox-user] access grant done username={identity.username} path={path}")
+                grant_parent_traverse_access(identity, path, sandbox_root=path.parent, log=log)
+                grant_leaf_modify_access(identity, path, log=log)
             except Exception as exc:
                 failed += 1
                 _emit(f"[sandbox-user] access grant failed username={identity.username} path={path} error_type={type(exc).__name__} error={exc}")
