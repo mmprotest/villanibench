@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree_argv
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
@@ -144,7 +145,7 @@ class PiAdapter(RunnerAdapter):
             pi_agent_dir.mkdir(parents=True, exist_ok=True)
             pi_sessions_dir.mkdir(parents=True, exist_ok=True)
 
-            env = os.environ.copy()
+            env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
             env.update({str(k): str(v) for k, v in (config.get("env") or {}).items()})
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUTF8"] = "1"
@@ -191,6 +192,7 @@ class PiAdapter(RunnerAdapter):
                 budget.wall_time_sec,
                 env=env,
                 stdin_text=None,
+                sandbox_identity=config.get("sandbox_identity"),
             )
             ended = now_iso()
 

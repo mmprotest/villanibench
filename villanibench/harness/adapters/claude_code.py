@@ -5,6 +5,7 @@ import shlex
 import shutil
 from pathlib import Path
 
+from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree_argv
 
 from .external_cli import ExternalCliAdapter
@@ -63,7 +64,7 @@ class ClaudeCodeAdapter(ExternalCliAdapter):
             prompt_text,
         ]
 
-        env = os.environ.copy()
+        env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
 
@@ -97,6 +98,7 @@ class ClaudeCodeAdapter(ExternalCliAdapter):
                     budget.wall_time_sec,
                     env=env,
                     stdin_text=None,
+                    sandbox_identity=config.get("sandbox_identity"),
                 )
                 out.write(completed.stdout)
                 err.write(completed.stderr)
