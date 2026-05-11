@@ -1,6 +1,17 @@
 import json
 from pathlib import Path
 
+import pytest
+from villanibench.harness.os_sandbox_user import SandboxIdentity
+
+
+@pytest.fixture(autouse=True)
+def _mock_sandbox_user_lifecycle(monkeypatch):
+    monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda: None)
+    monkeypatch.setattr("villanibench.harness.run.cleanup_sandbox_identity", lambda _i: None)
+    monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda _ident, _paths: None)
+
+
 from villanibench.harness.adapters.external_cli import ExternalCliAdapter
 from villanibench.harness.adapters.base import AdapterRunResult, RunnerAdapter, now_iso
 from villanibench.harness.run import run_cmd, run_suite

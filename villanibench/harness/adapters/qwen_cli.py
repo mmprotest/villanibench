@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree_argv
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
@@ -241,7 +242,7 @@ class QwenCliAdapter(RunnerAdapter):
                 prompt_text,
             ]
 
-            env = os.environ.copy()
+            env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
             api_key = str(config.get("api_key") or "dummy")
 
             env[QWEN_API_KEY_ENV] = api_key
@@ -265,6 +266,7 @@ class QwenCliAdapter(RunnerAdapter):
                 budget.wall_time_sec,
                 env=env,
                 stdin_text=None,
+                sandbox_identity=config.get("sandbox_identity"),
             )
 
             stdout_path.write_text(completed.stdout, encoding="utf-8")

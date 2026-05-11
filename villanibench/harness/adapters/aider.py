@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from villanibench.harness.os_sandbox_user import sandbox_env
 from villanibench.harness.process import run_command_tree_argv
 
 from .base import AdapterRunResult, RunnerAdapter, now_iso
@@ -206,7 +207,7 @@ def _build_redacted_argv(argv: list[str], redacted_values: set[str]) -> list[str
 
 
 def _git_env() -> dict[str, str]:
-    env = os.environ.copy()
+    env = sandbox_env(os.environ.copy(), Path(config["task_output_dir"]))
     env.update(
         {
             "GIT_AUTHOR_NAME": "bench",
@@ -438,6 +439,7 @@ class AiderAdapter(RunnerAdapter):
                 budget.wall_time_sec,
                 env=env,
                 stdin_text=None,
+                sandbox_identity=config.get("sandbox_identity"),
             )
 
             stdout_path.write_text(completed.stdout, encoding="utf-8")

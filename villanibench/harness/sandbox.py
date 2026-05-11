@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from villanibench.harness.os_sandbox_user import SandboxIdentity, grant_task_sandbox_access
 from villanibench.tasks.schema import TaskSpec
 
 
@@ -22,7 +23,11 @@ def copy_hidden_tests_to_sandbox_for_evaluation(task: TaskSpec, sandbox_dir: Pat
     return tests_hidden_dst
 
 
-def prepare_sandbox(task: TaskSpec, task_output_dir: Path) -> tuple[Path, Path]:
+def prepare_sandbox(
+    task: TaskSpec,
+    task_output_dir: Path,
+    sandbox_identity: SandboxIdentity | None = None,
+) -> tuple[Path, Path]:
     sandbox = task_output_dir / "sandbox"
     repo_dst = sandbox / "repo"
     if sandbox.exists():
@@ -31,4 +36,10 @@ def prepare_sandbox(task: TaskSpec, task_output_dir: Path) -> tuple[Path, Path]:
     shutil.copytree(task.task_dir / task.repo_dir, repo_dst)
     copy_visible_tests_to_sandbox(task, sandbox)
     shutil.copy2(task.task_dir / task.prompt_file, sandbox / "prompt.txt")
+    if sandbox_identity is not None:
+        runner_home = task_output_dir / "runner_home"
+        runner_tmp = task_output_dir / "runner_tmp"
+        runner_home.mkdir(parents=True, exist_ok=True)
+        runner_tmp.mkdir(parents=True, exist_ok=True)
+        grant_task_sandbox_access(sandbox_identity, [sandbox, runner_home, runner_tmp])
     return sandbox, repo_dst
