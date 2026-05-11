@@ -190,3 +190,50 @@ def test_prepare_sandbox_runner_access_plans_read_execute(monkeypatch, tmp_path:
     prepare_sandbox_runner_access("villani", type("I", (), {"username": "u"})(), exe, {})
     assert any(kind == "leaf" and p == sp for kind, p in calls)
     assert any(kind == "leaf" and p == src for kind, p in calls)
+
+
+from villanibench.harness.adapters.external_cli import _is_under_windows_user_profile, _runner_env_root, prepare_runner_env_for_sandbox, RunnerEnvPlan
+
+
+def test_profile_executable_detection_windows(monkeypatch):
+    assert _is_under_windows_user_profile(Path(r"C:\Users\Simon\x\tool.exe"))
+
+
+def test_runner_env_path_under_programdata(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
+    root = _runner_env_root(Path(r"C:\Users\Simon\a\.venv\Scripts\tool.exe"), Path(r"C:\Users\Simon\a\.venv"))
+    assert "runner_envs" in str(root)
+
+
+def test_prepare_runner_env_rewrites_executable_and_env(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
+    src = tmp_path / "Users" / "Simon" / "repo" / ".venv"
+    exe = src / "Scripts" / "villani-code.exe"
+    (src / "Scripts").mkdir(parents=True)
+    (src / "Lib" / "site-packages").mkdir(parents=True)
+    exe.write_text("", encoding="utf-8")
+    (src / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    env = {"PATH": str(src / "Scripts")}
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.prepare_sandbox_runner_access", lambda *a, **k: None)
+    plan = prepare_runner_env_for_sandbox("villani", type("I", (), {"username": "u"})(), exe, env)
+    assert isinstance(plan, RunnerEnvPlan)
+    assert "ProgramData" in str(plan.executable)
+    assert plan.env["VIRTUAL_ENV"].endswith(".venv")
+
+
+def test_unparseable_import_hook_fails(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("ProgramData", str(tmp_path / "ProgramData"))
+    src = tmp_path / "Users" / "Simon" / "repo" / ".venv"
+    exe = src / "Scripts" / "villani-code.exe"
+    sp = src / "Lib" / "site-packages"
+    sp.mkdir(parents=True)
+    (src / "Scripts").mkdir(parents=True)
+    exe.write_text("", encoding="utf-8")
+    (src / "Scripts" / "python.exe").write_text("", encoding="utf-8")
+    (sp / "bad.pth").write_text("import something", encoding="utf-8")
+    monkeypatch.setattr("villanibench.harness.adapters.external_cli.prepare_sandbox_runner_access", lambda *a, **k: None)
+    try:
+        prepare_runner_env_for_sandbox("villani", type("I", (), {"username": "u"})(), exe, {"PATH": str(src / "Scripts")})
+        assert False
+    except RuntimeError as exc:
+        assert "Unparseable editable import-hook" in str(exc)
