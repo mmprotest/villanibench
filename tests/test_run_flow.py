@@ -7,7 +7,7 @@ from villanibench.harness.os_sandbox_user import SandboxIdentity
 
 @pytest.fixture(autouse=True)
 def _mock_sandbox_user_lifecycle(monkeypatch):
-    monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda: None)
+    monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda log=None: None)
     monkeypatch.setattr("villanibench.harness.run.cleanup_sandbox_identity", lambda _i: None)
     monkeypatch.setattr("villanibench.harness.sandbox.grant_task_sandbox_access", lambda _ident, _paths: None)
 

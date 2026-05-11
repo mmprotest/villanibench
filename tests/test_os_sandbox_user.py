@@ -1,5 +1,4 @@
 from pathlib import Path
-import subprocess
 
 from villanibench.harness import os_sandbox_user as m
 
@@ -21,53 +20,102 @@ def test_create_identity_windows_admin_preflight(monkeypatch):
         assert "requires an elevated Administrator shell" in str(exc)
 
 
-def test_create_identity_windows_uses_fixed_username_and_timeouts(monkeypatch):
-    calls = []
+def test_windows_create_uses_netapi_not_net_user_add(monkeypatch):
     monkeypatch.setattr(m.os, "name", "nt")
     monkeypatch.setattr(m, "_is_windows_admin", lambda: True)
+    calls = []
 
-    def fake_run(argv, **kwargs):
-        calls.append((argv, kwargs))
-        return type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+    class Net:
+        def NetUserDel(self, *_):
+            calls.append("del")
+            return m.NERR_UserNotFound
 
-    monkeypatch.setattr(m.subprocess, "run", fake_run)
+        def NetUserAdd(self, *_):
+            calls.append("add")
+            return m.NERR_Success
+
+        def NetUserGetInfo(self, *_):
+            calls.append("get")
+            return m.NERR_Success
+
+        def NetApiBufferFree(self, *_):
+            return 0
+
+    monkeypatch.setattr(m, "_netapi32", lambda: Net())
+    monkeypatch.setattr(m, "_run_admin_command", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not call net user add")))
     ident = m.create_sandbox_identity()
     assert ident.username == "villanibench_sandbox"
-    assert calls[0][0] == ["net", "user", "villanibench_sandbox", "/delete"]
-    assert calls[0][1]["timeout"] == 20.0
-    assert calls[1][0][0:3] == ["net", "user", "villanibench_sandbox"]
+    assert calls == ["del", "add", "get"]
 
 
-def test_create_identity_windows_timeout_raises(monkeypatch):
+def test_windows_create_add_failure_raises(monkeypatch):
     monkeypatch.setattr(m.os, "name", "nt")
     monkeypatch.setattr(m, "_is_windows_admin", lambda: True)
 
-    def fake_run(argv, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs["timeout"])
+    class Net:
+        def NetUserDel(self, *_): return m.NERR_UserNotFound
+        def NetUserAdd(self, *_): return 5
+        def NetUserGetInfo(self, *_): return m.NERR_Success
+        def NetApiBufferFree(self, *_): return 0
 
-    monkeypatch.setattr(m.subprocess, "run", fake_run)
+    monkeypatch.setattr(m, "_netapi32", lambda: Net())
     try:
         m.create_sandbox_identity()
         assert False
     except RuntimeError as exc:
-        assert "timed out" in str(exc)
+        assert "NetUserAdd failed" in str(exc)
+
+
+def test_windows_verify_failure_raises(monkeypatch):
+    monkeypatch.setattr(m.os, "name", "nt")
+    monkeypatch.setattr(m, "_is_windows_admin", lambda: True)
+
+    class Net:
+        def NetUserDel(self, *_): return m.NERR_UserNotFound
+        def NetUserAdd(self, *_): return m.NERR_Success
+        def NetUserGetInfo(self, *_): return m.NERR_UserNotFound
+        def NetApiBufferFree(self, *_): return 0
+
+    monkeypatch.setattr(m, "_netapi32", lambda: Net())
+    try:
+        m.create_sandbox_identity()
+        assert False
+    except RuntimeError as exc:
+        assert "was not found" in str(exc)
+
+
+def test_password_not_logged(monkeypatch):
+    monkeypatch.setattr(m.os, "name", "nt")
+    monkeypatch.setattr(m, "_is_windows_admin", lambda: True)
+
+    class Net:
+        def NetUserDel(self, *_): return m.NERR_UserNotFound
+        def NetUserAdd(self, *_): return m.NERR_Success
+        def NetUserGetInfo(self, *_): return m.NERR_Success
+        def NetApiBufferFree(self, *_): return 0
+
+    monkeypatch.setattr(m, "_netapi32", lambda: Net())
+    logs = []
+    ident = m.create_sandbox_identity(log=logs.append)
+    joined = "\n".join(logs)
+    assert ident.password not in joined
+
+
+def test_cleanup_uses_netuserdel_and_warns_on_failure(monkeypatch, capsys):
+    monkeypatch.setattr(m.os, "name", "nt")
+
+    class Net:
+        def NetUserDel(self, *_): return 5
+
+    monkeypatch.setattr(m, "_netapi32", lambda: Net())
+    m.cleanup_sandbox_identity(m.SandboxIdentity(username=m.SANDBOX_USERNAME, password="hidden", created=True))
+    assert "failed to delete sandbox user" in capsys.readouterr().out
 
 
 def test_windows_password_charset():
     pw = m._generate_password(128)
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
     assert set(pw).issubset(allowed)
-
-
-def test_cleanup_warns_on_failure_and_does_not_raise(monkeypatch, capsys):
-    monkeypatch.setattr(m.os, "name", "nt")
-    monkeypatch.setattr(
-        m,
-        "_run_admin_command",
-        lambda *a, **k: type("R", (), {"returncode": 1, "stderr": "boom", "stdout": ""})(),
-    )
-    m.cleanup_sandbox_identity(m.SandboxIdentity(username=m.SANDBOX_USERNAME, password="hidden", created=True))
-    assert "failed to delete sandbox user" in capsys.readouterr().out
 
 
 def test_icacls_calls_bounded_helper(monkeypatch, tmp_path):
