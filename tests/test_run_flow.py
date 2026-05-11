@@ -248,3 +248,23 @@ def test_run_suite_calls_prepare_and_cleanup(tmp_path: Path, monkeypatch):
     out = tmp_path / "run"
     run_suite(_single_task_suite(tmp_path), "fake", "dummy", out, {})
     assert adapter.calls == ["prepare", "run", "cleanup"]
+
+
+def test_sandbox_smoke_uses_sandbox_workdir_not_output_dir(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("villanibench.harness.run.create_sandbox_identity", lambda log=None: SandboxIdentity("villanibench_sandbox", "pw"))
+    monkeypatch.setattr("villanibench.harness.run.cleanup_sandbox_identity", lambda _i: None)
+    monkeypatch.setattr("villanibench.harness.run.grant_task_sandbox_access", lambda *_a, **_k: None)
+    seen = []
+
+    def fake_run(argv, cwd, timeout_sec, env=None, stdin_text=None, sandbox_identity=None):
+        seen.append(Path(cwd))
+        return type("R", (), {"exit_code": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr("villanibench.harness.run.run_command_tree_argv", fake_run)
+    adapter = ExternalCliAdapter("fake_external", 'python -c "print(1)"')
+    monkeypatch.setattr("villanibench.harness.run.build_adapter", lambda _name: adapter)
+    out = tmp_path / "out"
+    run_suite(_single_task_suite(tmp_path), "fake_external", "dummy", out, {})
+    assert seen
+    assert seen[0] != out.resolve()
+    assert "villanibench" in str(seen[0])

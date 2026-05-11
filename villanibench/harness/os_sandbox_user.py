@@ -6,6 +6,7 @@ import secrets
 import shutil
 import string
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -165,6 +166,36 @@ def cleanup_sandbox_identity(identity: SandboxIdentity) -> None:
     print(f"WARNING: could not cleanup sandbox user {identity.username}: unsupported OS")
 
 
+
+
+def build_sandbox_workdir(output_dir: Path, run_id: str) -> Path:
+    root = Path(tempfile.gettempdir()) / "villanibench" / "sandbox"
+    return (root / run_id).resolve()
+
+
+def parent_dirs_for_traverse(path: Path) -> list[Path]:
+    resolved = path.resolve()
+    parents = list(resolved.parents)
+    parents.reverse()
+    return parents
+
+
+def grant_parent_traverse_access(identity: SandboxIdentity, path: Path, log: Callable[[str], None] | None = None) -> None:
+    def _emit(msg: str) -> None:
+        if log is not None:
+            log(msg)
+
+    if os.name != "nt":
+        return
+    for parent in parent_dirs_for_traverse(path):
+        _emit(f"[sandbox-user] access grant start username={identity.username} path={parent} mode=read_execute")
+        try:
+            _run_admin_command(["icacls", str(parent), "/grant", f"{identity.username}:(RX)", "/C"])
+            _emit(f"[sandbox-user] access grant done username={identity.username} path={parent}")
+        except Exception as exc:
+            _emit(f"[sandbox-user] access grant failed username={identity.username} path={parent} error={exc}")
+            raise
+
 def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log: Callable[[str], None] | None = None) -> None:
     def _emit(msg: str) -> None:
         if log is not None:
@@ -174,6 +205,7 @@ def grant_task_sandbox_access(identity: SandboxIdentity, paths: list[Path], log:
         for path in paths:
             _emit(f"[sandbox-user] access grant start username={identity.username} path={path} mode=modify")
             try:
+                grant_parent_traverse_access(identity, path, log=log)
                 _run_admin_command(["icacls", str(path), "/grant", f"{identity.username}:(OI)(CI)M", "/T", "/C"])
                 _emit(f"[sandbox-user] access grant done username={identity.username} path={path}")
             except Exception as exc:

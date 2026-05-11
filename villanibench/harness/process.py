@@ -192,7 +192,7 @@ def _windows_create_process_with_logon(command_line: str, cwd: Path, timeout_sec
                 f"executable_resolved_by_which='{exe_resolved}' "
                 f"executable_exists={exe_exists} executable_is_file={exe_is_file} "
                 f"cwd_raw='{cwd_raw}' cwd_resolved='{cwd_resolved}' "
-                f"cwd_exists={cwd_exists} cwd_is_dir={cwd_is_dir} env={_selected_env_summary(env)}"
+                f"cwd_exists_for_parent={cwd_exists} cwd_is_dir_for_parent={cwd_is_dir} env={_selected_env_summary(env)}"
             )
             print(f"[sandbox-launch] {detail}", flush=True)
             raise RuntimeError(detail)

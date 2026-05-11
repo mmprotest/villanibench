@@ -134,3 +134,26 @@ def test_icacls_calls_bounded_helper(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "_run_admin_command", fake)
     m.grant_task_sandbox_access(m.SandboxIdentity(username="villanibench_sandbox", password="x"), [tmp_path])
     assert seen and seen[0][0][0] == "icacls"
+
+
+def test_build_sandbox_workdir_is_absolute(tmp_path, monkeypatch):
+    monkeypatch.setattr(m.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
+    out = m.build_sandbox_workdir(Path("relative/out"), "rid-1")
+    assert out.is_absolute()
+    assert "villanibench" in str(out)
+
+
+def test_parent_dirs_for_traverse_order(tmp_path):
+    leaf = tmp_path / "a" / "b" / "c"
+    parents = m.parent_dirs_for_traverse(leaf)
+    assert parents
+    assert parents[-1] == leaf.parent
+
+
+def test_grant_parent_traverse_access_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(m.os, "name", "nt")
+    calls = []
+    monkeypatch.setattr(m, "_run_admin_command", lambda argv, **kwargs: calls.append(argv) or type("R", (), {"returncode": 0, "stderr": "", "stdout": ""})())
+    m.grant_parent_traverse_access(m.SandboxIdentity(username="villanibench_sandbox", password="x"), tmp_path / "one" / "two")
+    assert calls
+    assert all(":(RX)" in " ".join(cmd) for cmd in calls)
