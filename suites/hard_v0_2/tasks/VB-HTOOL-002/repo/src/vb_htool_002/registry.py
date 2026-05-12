@@ -3,7 +3,6 @@ from .plugins.sms_plugin import handle as sms_handler
 
 REGISTRY = {
     "json": json_handler,
-    "sms": sms_handler,
 }
 
 

@@ -11,12 +11,12 @@ def import_rows(text: str):
         try:
             row = {key: raw[key].strip() for key in REQUIRED}
         except (KeyError, AttributeError):
-            continue
+            break
         if any(not row[key] for key in REQUIRED):
-            continue
+            break
         try:
             amount = int(row["amount"])
         except ValueError:
-            continue
+            break
         rows.append({"id": row["id"], "name": row["name"], "amount": amount})
     return rows
